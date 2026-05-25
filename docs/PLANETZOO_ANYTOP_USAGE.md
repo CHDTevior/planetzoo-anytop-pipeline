@@ -70,6 +70,9 @@ H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_tex
 H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_text_manifest.jsonl
 H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_text_manifest.csv
 H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/rest_pose_validation.json
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/cond.npy
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motions
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/bvhs
 H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/vlm_previews/vlm_preview_manifest.jsonl
 H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/vlm_previews/vlm_preview_manifest.csv
 ```
@@ -127,6 +130,8 @@ Notes:
 - `--skip-animations` skips AnyTop MP4 sanity renders.
 - The converter still writes `motions/*.npy`, processed `bvhs/*.bvh`, and
   `cond.npy`.
+- This stage intentionally writes one folder per Planet Zoo skeleton. That is
+  the same unit consumed by AnyTop's `process_new_skeleton` path.
 - Use `--skip-complete` instead of `--overwrite` to resume a partial run.
 - Per-object logs are written to:
 
@@ -157,7 +162,48 @@ With external captions, add:
 Missing captions are intentionally kept as empty text. The motion row is not
 dropped.
 
-## Step 4. Summarize Dataset
+## Step 4. Pack Into AnyTop Full-Dataset Layout
+
+AnyTop's full Truebones dataset is stored as one pooled dataset root with
+global `motions/`, `bvhs/`, and one `cond.npy` containing all object keys.
+After the per-skeleton conversion and text matching finish, pack the Planet Zoo
+folders into that shape:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/pack_planetzoo_anytop_dataset.py `
+  --processed-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --output-root H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout `
+  --text-manifest H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
+  --link-mode hardlink `
+  --overwrite
+```
+
+`--link-mode hardlink` avoids duplicating the large NPY/BVH files on the same
+drive. Use `--link-mode copy` only when the destination is on another volume or
+hardlinks are not available.
+
+Packed output:
+
+```text
+processed_anytop_autoroll_anytop_layout/
+  motions/
+  bvhs/
+  animations/
+  cond.npy
+  metadata.txt
+  object_index.csv
+  pack_manifest.jsonl
+  pack_summary.json
+  motion_text_manifest.jsonl
+  motion_text_manifest.json
+  motion_text_manifest.csv
+```
+
+If the pooled AnyTop layout already exists, rerun this step after rebuilding the
+text manifest so the packed manifest paths point at the pooled `motions/` and
+`bvhs/` folders.
+
+## Step 5. Summarize Dataset
 
 Fast summary without reading every array fully:
 
