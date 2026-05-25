@@ -326,13 +326,16 @@ C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/
   --max-items-per-sheet 90
 ```
 
-Current contact-sheet output:
+When generated, the full contact-sheet review set contains:
 
 ```text
 Objects: 473
 Sheets: 1135
 Manifest: H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/visual_caption_contact_sheets_full/contact_sheet_manifest.json
 ```
+
+These contact sheets are review intermediates. They can be deleted after QA and
+regenerated from the command above.
 
 Then export the clean AnyTop-style caption JSON beside `cond.npy`:
 
