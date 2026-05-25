@@ -12,6 +12,8 @@ notes under `docs/PLANETZOO_ANYTOP_PIPELINE.md`, plus helper scripts under
 Planet Zoo full-topology BVH exports while keeping the processed motion format
 compatible with AnyTop.
 
+For command-by-command reproduction, see `docs/PLANETZOO_ANYTOP_USAGE.md`.
+
 ![teaser](https://github.com/Anytop2025/Anytop-page/blob/main/static/videos/anytop_teaser/teaser.gif)
 
 ## Update Notice
