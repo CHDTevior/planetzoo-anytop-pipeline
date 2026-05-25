@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+# Local environments and generated data
+.venv/
+venv/
+dataset/
+save/
+*.mp4
+*.gif
+*.zip
+
+# Local Planet Zoo / AnyTop processing outputs
+AniMo4D_work/
+*.blend1
