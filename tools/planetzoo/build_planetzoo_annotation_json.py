@@ -135,7 +135,23 @@ def strip_onspot(action: str) -> tuple[str, bool]:
 
 def state_phrase(state: str) -> str:
     state = re.sub(r"\d+$", "", state.replace("_", ""))
+    state = re.sub(r"onspo$", "onspot", state)
     state, onspot = strip_onspot(state)
+    if re.fullmatch(r"jumpdown\d+x\d+m", state):
+        phrase = "jumping down"
+        if onspot:
+            phrase = f"{phrase} in place"
+        return phrase
+    if re.fullmatch(r"jumpup\d+x\d+m", state):
+        phrase = "jumping up"
+        if onspot:
+            phrase = f"{phrase} in place"
+        return phrase
+    if re.fullmatch(r"jump\d+m", state):
+        phrase = "jumping forward"
+        if onspot:
+            phrase = f"{phrase} in place"
+        return phrase
     mapping = {
         "stand": "standing",
         "standidle": "standing idly",
@@ -144,13 +160,16 @@ def state_phrase(state: str) -> str:
         "runbase": "running forward",
         "walk": "walking",
         "walkbase": "walking forward",
+        "walkbasewingsout": "walking forward with wings out",
         "swim": "swimming",
         "swimbase": "swimming forward",
+        "swimlowbase": "swimming low in the water",
         "swimtreadwater": "treading water",
+        "swimlowtreadwater": "treading water low in the water",
         "jump": "jumping",
-        "jumpin": "jumping in",
+        "jumpin": "beginning a jump",
         "jumpmid": "mid-jump",
-        "jumpout": "jumping out",
+        "jumpout": "landing from a jump",
         "drink": "drinking",
         "drinkloop": "drinking",
         "drinktrough": "drinking from a trough",
@@ -162,6 +181,7 @@ def state_phrase(state: str) -> str:
         "restloop": "resting",
         "sleep": "sleeping",
         "fight": "fighting",
+        "pounce": "pouncing",
         "climb": "climbing",
         "climbbase": "climbing",
         "climbidle": "idling on a climb",
@@ -175,6 +195,9 @@ def state_phrase(state: str) -> str:
         "climbjumpin": "jumping into a climb",
         "climbjumpout": "jumping out of a climb",
         "hangdown": "hanging down",
+        "slidebase": "sliding forward",
+        "slidebasefast": "sliding forward quickly",
+        "slidebaseslow": "sliding forward slowly",
         "deepswim": "deep swimming",
         "deepswimdivein": "diving into deep water",
         "deepswimdiveout": "surfacing from deep water",
@@ -195,20 +218,44 @@ def state_phrase(state: str) -> str:
 
 def predicate_for_action(action: str) -> str:
     action = action.replace("_", "")
+    action = re.sub(r"onspo$", "onspot", action)
     action, onspot = strip_onspot(action)
+    if re.fullmatch(r"jumpdown\d+x\d+m", action):
+        predicate = "jumps down"
+        if onspot:
+            predicate = f"{predicate} in place"
+        return predicate
+    if re.fullmatch(r"jumpup\d+x\d+m", action):
+        predicate = "jumps up"
+        if onspot:
+            predicate = f"{predicate} in place"
+        return predicate
+    if re.fullmatch(r"jump\d+m", action):
+        predicate = "jumps forward"
+        if onspot:
+            predicate = f"{predicate} in place"
+        return predicate
+    if re.fullmatch(r"testtransition\d*", action):
+        predicate = "performs a test transition"
+        if onspot:
+            predicate = f"{predicate} in place"
+        return predicate
     mapping = {
         "run": "runs",
         "runbase": "runs forward",
         "walk": "walks",
         "walkbase": "walks forward",
+        "walkbasewingsout": "walks forward with wings out",
         "swim": "swims",
         "swimbase": "swims forward",
+        "swimlowbase": "swims low in the water",
         "swimtreadwater": "treads water",
+        "swimlowtreadwater": "treads water low in the water",
         "stand": "stands",
         "standidle": "stands idly",
-        "jumpin": "jumps in",
+        "jumpin": "begins a jump",
         "jumpmid": "continues through a jump",
-        "jumpout": "jumps out",
+        "jumpout": "lands from a jump",
         "jumptoswim": "jumps into a swim",
         "drinkloop": "drinks",
         "drinktroughloop": "drinks from a trough",
@@ -234,6 +281,9 @@ def predicate_for_action(action: str) -> str:
         "fighttauntreact": "reacts to a fight taunt",
         "fightvictorytaunt": "performs a victory taunt after fighting",
         "fightidle": "idles in a fighting stance",
+        "fightpouncefromrun": "runs forward and pounces into a fight",
+        "runtopounce": "runs forward and pounces",
+        "enrichmentpounce": "pounces during an enrichment interaction",
         "matingritual": "performs a mating ritual",
         "matingcourtship": "performs a courtship display",
         "standgimmick": "performs a standing display",
@@ -253,6 +303,9 @@ def predicate_for_action(action: str) -> str:
         "climbjumpout": "jumps out of a climb",
         "hangdown": "hangs down",
         "hangdownloop": "hangs down",
+        "slidebase": "slides forward",
+        "slidebasefast": "slides forward quickly",
+        "slidebaseslow": "slides forward slowly",
         "deepswim": "swims underwater",
         "deepswimdivein": "dives into deep water",
         "deepswimdiveout": "surfaces from deep water",
@@ -270,14 +323,13 @@ def predicate_for_action(action: str) -> str:
 
 def draft_caption_from_action(row: dict[str, Any]) -> str:
     action = str(row.get("action_short") or "").lower().replace("_", "")
+    action = re.sub(r"onspo$", "onspot", action)
     subject = animal_phrase(row.get("animal_key"))
     if not action:
         return clean_caption(f"{subject} performs an animal motion.")
 
     body, direction, degrees = strip_turn(action)
     body, onspot = strip_onspot(body)
-    if onspot:
-        body = body + "onspot"
 
     if "to" in body:
         src, dst = body.split("to", 1)
@@ -287,10 +339,16 @@ def draft_caption_from_action(row: dict[str, Any]) -> str:
     else:
         caption = f"{subject} {predicate_for_action(body)}"
 
+    if onspot and "in place" not in caption:
+        caption += " in place"
     if direction and "turns " not in caption:
         caption += f" while turning {direction}"
     if degrees:
         degrees_value = int(degrees)
+        if 85 <= degrees_value <= 95:
+            degrees_value = 90
+        elif 175 <= degrees_value <= 185:
+            degrees_value = 180
         if degrees_value:
             caption += f" about {degrees_value} degrees"
     return clean_caption(caption)

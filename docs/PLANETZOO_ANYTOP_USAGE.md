@@ -266,6 +266,8 @@ Clip length range: 2-237
 Clips per object range: 23-314
 Matched AniMosity4D captions: 32124
 Codex filename/action drafts: 49911
+Clean training caption JSON rows: 82035
+Captions per row: 5
 ```
 
 The processed feature layout follows AnyTop:
@@ -305,6 +307,81 @@ Total JPEGs: 82508
 Approx size: 3.5 GB
 Manifest: H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.jsonl
 CSV: H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.csv
+```
+
+## Step 7. Build Visual-Reviewed Training Captions
+
+First create paged contact sheets from the storyboard previews. These sheets are
+for human/VLM review and include the action label, `present`/`codex_draft`
+status, and the current primary caption.
+
+```powershell
+C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe tools/planetzoo/make_vlm_contact_sheets.py `
+  --annotation-json H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_animosty4d_matches.json `
+  --output-dir H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/visual_caption_contact_sheets_full `
+  --columns 3 `
+  --cell-width 560 `
+  --image-height 92 `
+  --label-height 76 `
+  --max-items-per-sheet 90
+```
+
+Current contact-sheet output:
+
+```text
+Objects: 473
+Sheets: 1135
+Manifest: H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/visual_caption_contact_sheets_full/contact_sheet_manifest.json
+```
+
+Then export the clean AnyTop-style caption JSON beside `cond.npy`:
+
+```powershell
+C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe tools/planetzoo/export_training_caption_json.py `
+  --input-json H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_animosty4d_matches.json `
+  --output-json H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_codex_drafts.json `
+  --summary-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_codex_drafts_summary.json `
+  --audit-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_codex_drafts_audit.json `
+  --caption-count 5 `
+  --max-captions 6
+```
+
+This final JSON intentionally contains only the AnyTop-style fields:
+
+```text
+annotation_source
+captions
+match_status
+needs_human_review
+primary_caption
+segment_count_for_source_file
+segment_index
+source_file
+source_motion_id
+text_status
+```
+
+No absolute Windows paths are written. Captions are reviewed against the
+contact sheets and action labels, with these rules:
+
+- Keep valid existing scene/action nouns such as eating, drinking, trough,
+  beam, and water when they match `action_short`.
+- Use the `PZ_*` object name as the source of truth for male/female/juvenile
+  wording, including `present` captions.
+- Correct known tokenization errors such as `Eaton spot`, `jumpou to nspot`,
+  `swimlowtread water`, and raw distance-coded jump labels.
+- Append visual/action paraphrases without adding extra JSON keys.
+
+Current clean caption output:
+
+```text
+Rows: 82035
+present: 32124
+codex_draft: 49911
+Captions per row: 5
+Gender/juvenile QA mismatches: 0
+Malformed action-token QA hits: 0
+Windows path QA hits: 0
 ```
 
 ## Retry Individual Objects
