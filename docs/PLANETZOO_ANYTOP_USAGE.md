@@ -142,25 +142,49 @@ H:/AniMo4D_work/06_anytop_processed_full_autoroll/status_anytop
 
 ## Step 3. Build Text Manifest
 
-Without external captions:
+To reuse AniMosity4D text files and fill unmatched clips with conservative
+Codex filename/action drafts:
 
 ```powershell
-H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/build_planetzoo_text_manifest.py `
-  --processed-dir H:/AniMo4D_work/06_anytop_processed_full_autoroll `
-  --export-manifest H:/AniMo4D_work/05_fulltopo_raw_bvh_full/export_manifest.jsonl `
-  --output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
-  --json-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.json `
-  --csv-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.csv
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/build_planetzoo_annotation_json.py `
+  --motion-manifest H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
+  --texts-root H:/AniMo4D_work/texts `
+  --vlm-preview-manifest H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.jsonl `
+  --manifest-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
+  --manifest-json-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.json `
+  --manifest-csv-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.csv `
+  --by-file-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_texts_by_file_with_animosty4d_matches.json `
+  --summary-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_match_summary.json `
+  --draft-missing
 ```
 
-With external captions, add:
+The AniMosity4D txt format is parsed as
+`animal#sex#caption#token_tags#start#end`; the natural-language caption is the
+third field. Text files are matched by normalized raw BVH stem after stripping
+the `_keypoints.json.txt` suffix.
+
+For pooled AnyTop layout paths, run the same command with `--pooled-root` and
+write outputs under `processed_anytop_autoroll_anytop_layout`:
 
 ```powershell
-  --text-root H:/path/to/texts_or_manifest
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/build_planetzoo_annotation_json.py `
+  --motion-manifest H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
+  --texts-root H:/AniMo4D_work/texts `
+  --vlm-preview-manifest H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.jsonl `
+  --pooled-root H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout `
+  --manifest-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_text_manifest.jsonl `
+  --manifest-json-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_text_manifest.json `
+  --manifest-csv-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_text_manifest.csv `
+  --by-file-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_texts_by_file_with_animosty4d_matches.json `
+  --summary-output H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout/motion_text_match_summary.json `
+  --draft-missing
 ```
 
-Missing captions are intentionally kept as empty text. The motion row is not
-dropped.
+Matched captions have `annotation_source=animosty4d_text` and
+`needs_human_review=false`. Draft captions have
+`annotation_source=codex_draft_from_filename_and_preview`,
+`text_status=codex_draft`, and `needs_human_review=true`; each row also keeps
+`vlm_preview_path` for visual review.
 
 ## Step 4. Pack Into AnyTop Full-Dataset Layout
 
@@ -240,6 +264,8 @@ Feature dimension: 13
 Node count range: 88-411
 Clip length range: 2-237
 Clips per object range: 23-314
+Matched AniMosity4D captions: 32124
+Codex filename/action drafts: 49911
 ```
 
 The processed feature layout follows AnyTop:
