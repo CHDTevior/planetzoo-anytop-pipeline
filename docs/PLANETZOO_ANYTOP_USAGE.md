@@ -83,10 +83,15 @@ H:/AniMo4D_work/05_fulltopo_raw_bvh_full/status
 
 Run from the repo root:
 
+The Planet Zoo conversion path aligns motion to AnyTop's `Y up`, `+Z forward`
+convention and bakes the processed BVH rest basis so Blender Edit Mode shows an
+upright rest pose while preserving animated global joint positions. The rest
+basis uses a per-object roll choice, so do not reuse older fixed-roll outputs.
+
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_parallel_anytop_process.py `
   --raw-root H:/AniMo4D_work/05_fulltopo_raw_bvh_full `
-  --output-root H:/AniMo4D_work/06_anytop_processed_full `
+  --output-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
   --python H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe `
   --repo-root H:/codex_project1/.codex-tmp/planetzoo-anytop-pipeline-upload `
   --workers 6 `
@@ -103,8 +108,8 @@ Notes:
 - Per-object logs are written to:
 
 ```text
-H:/AniMo4D_work/06_anytop_processed_full/logs_anytop
-H:/AniMo4D_work/06_anytop_processed_full/status_anytop
+H:/AniMo4D_work/06_anytop_processed_full_autoroll/logs_anytop
+H:/AniMo4D_work/06_anytop_processed_full_autoroll/status_anytop
 ```
 
 ## Step 3. Build Text Manifest

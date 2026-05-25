@@ -13,6 +13,8 @@ Female demo, while keeping the commands easy to adapt for larger batches.
 - Raw full-topology BVH demo: `H:/AniMo4D_work/05_fulltopo_raw_bvh_demo7`
 - Processed AnyTop demo:
   `H:/AniMo4D_work/06_anytop_demo/PZ_Aardvark_Female_demo13_rollz_neg90_contact`
+- Current full AnyTop output:
+  `H:/AniMo4D_work/06_anytop_processed_full_autoroll`
 - Blender: `H:/blender4_5/blender.exe`
 - CobraTools:
   `H:/codex_project1/.codex-tmp/AniMo/data_generation/export_json/cobra-tools`
@@ -159,6 +161,12 @@ Current Planet Zoo adjustments:
 - A fixed Planet Zoo global roll of `Z = -90 degrees` is applied after yaw
   alignment. This was verified visually against the AnyTop camera/rendering
   convention.
+- Planet Zoo processed BVH/condition offsets are also baked into an aligned
+  rest basis: hips-to-chest faces `+Z`, then the converter chooses a per-object
+  rest-basis roll from `Z = -90 degrees` or `Z = 90 degrees`. The chosen roll is
+  the one where core body joints sit above foot/toe/hoof support joints under
+  AnyTop's `Y up` convention. The local rotations are changed by the inverse
+  basis transform so the animated global joint positions are preserved.
 - Initial root `XZ` translation is moved to the origin.
 - The skeleton is scaled against AnyTop's `HML_AVG_BONELEN`, using stable
   Planet Zoo body/limb reference joints rather than tiny helper/twist joints.
@@ -229,17 +237,19 @@ Example command:
 
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/build_planetzoo_text_manifest.py `
-  --processed-dir H:/AniMo4D_work/06_anytop_demo/PZ_Aardvark_Female_demo13_rollz_neg90_contact `
-  --export-manifest H:/AniMo4D_work/05_fulltopo_raw_bvh_demo7/Aardvark_Female_ovl/export_manifest.jsonl `
-  --csv-output H:/AniMo4D_work/06_anytop_demo/PZ_Aardvark_Female_demo13_rollz_neg90_contact/motion_text_manifest.csv
+  --processed-dir H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --export-manifest H:/AniMo4D_work/05_fulltopo_raw_bvh_full/export_manifest.jsonl `
+  --json-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.json `
+  --csv-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.csv `
+  --output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl
 ```
 
-Current demo manifest result:
+Current full manifest result:
 
 ```text
-rows = 2
+rows = 82035
 matched_text = 0
-missing_text = 2
+missing_text = 82035
 ```
 
 ## 6. Dataset Statistics
@@ -248,14 +258,26 @@ After conversion, summarize AnyTop-format outputs with:
 
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/summarize_anytop_dataset.py `
-  --processed-root H:/AniMo4D_work/06_anytop_processed `
-  --output-json H:/AniMo4D_work/06_anytop_processed/dataset_summary.json `
-  --output-csv H:/AniMo4D_work/06_anytop_processed/dataset_summary_objects.csv
+  --processed-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --output-json H:/AniMo4D_work/06_anytop_processed_full_autoroll/dataset_summary.json `
+  --output-csv H:/AniMo4D_work/06_anytop_processed_full_autoroll/dataset_summary_objects.csv `
+  --include-foot-contact
 ```
 
 The summary reports total objects, total clips, node-count range, clip-length
 range, clips-per-object range, exact node-count distribution, exact/binned
 length distribution, and per-object rows.
+
+Current full summary:
+
+```text
+objects = 473
+clips = 82035
+node_count_range = 88..411
+clip_length_range = 2..237
+clips_per_object_range = 23..314
+feature_dim_values = [13]
+```
 
 ## 7. Visual Sanity Checks
 
@@ -270,7 +292,9 @@ H:/AniMo4D_work/06_anytop_demo/PZ_Aardvark_Female_demo13_rollz_neg90_contact/any
 ```
 
 The final verified transform is the one with Planet Zoo global roll
-`Z = -90 degrees`.
+`Z = -90 degrees`, plus the per-object Planet Zoo rest-basis correction
+described above. In the current full run, 300 objects selected rest roll
+`Z = -90 degrees` and 173 objects selected rest roll `Z = 90 degrees`.
 
 ## 8. What Should Be Versioned
 

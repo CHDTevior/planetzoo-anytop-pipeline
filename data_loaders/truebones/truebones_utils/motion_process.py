@@ -18,6 +18,8 @@ from utils.rotation_conversions import rotation_6d_to_matrix_np
 
 ################## Data Generation #####################
 PLANETZOO_GLOBAL_ROLL_Z_DEG = -90.0
+PLANETZOO_REST_BASIS_DEFAULT_ROLL_Z_DEG = -90.0
+PLANETZOO_REST_BASIS_ROLL_CANDIDATES_DEG = (-90.0, 90.0)
 
 def safe_normalize_vectors(vectors, fallback=np.array([0, 0, 1]), eps=1e-8):
     norms = np.sqrt((vectors ** 2).sum(axis=-1))
@@ -31,6 +33,19 @@ def yaw_quat_to_face_z(forward):
     forward = safe_normalize_vectors(forward)
     angles = -np.arctan2(forward[:, 0], forward[:, 2])
     return Quaternions.from_angle_axis(angles, np.array([0, 1, 0]))
+
+def repeat_quaternion(q, shape):
+    base = q.qs.reshape(-1, 4)[0]
+    return Quaternions(np.tile(base, tuple(shape) + (1,)))
+
+def positions_from_offsets(offsets, parents):
+    positions = np.zeros_like(offsets, dtype=float)
+    for joint, parent in enumerate(parents):
+        if parent >= 0:
+            positions[joint] = positions[parent] + offsets[joint]
+        else:
+            positions[joint] = offsets[joint]
+    return positions
 
 """ Computes orientation based on object type face joints and returns root quaternion
 rotation to ensure it faces z+. Four indices keep the original AnyTop left/right
@@ -58,6 +73,89 @@ def get_root_quat(joints, object_type, face_joint_indx=None):
     if object_type == "Anaconda":
         root_quat = Quaternions.from_euler(np.array([0, -np.pi/2, 0]), "xyz") * root_quat
     return root_quat
+
+def get_planetzoo_rest_joint_indices(joint_names, tokens):
+    if joint_names is None:
+        return []
+    return [
+        idx
+        for idx, name in enumerate(joint_names)
+        if any(token in name.lower() for token in tokens)
+    ]
+
+def choose_planetzoo_rest_basis_roll(yaw_aligned_offsets, parents, joint_names=None):
+    foot_indices = get_planetzoo_rest_joint_indices(joint_names, ["toe", "foot", "hoof", "ashi", "paw"])
+    core_indices = get_planetzoo_rest_joint_indices(joint_names, ["hips", "spine", "chest", "neck"])
+    if not foot_indices or not core_indices:
+        return PLANETZOO_REST_BASIS_DEFAULT_ROLL_Z_DEG, None
+    best_roll = PLANETZOO_REST_BASIS_DEFAULT_ROLL_Z_DEG
+    best_score = -np.inf
+    for roll_deg in PLANETZOO_REST_BASIS_ROLL_CANDIDATES_DEG:
+        roll = Quaternions.from_angle_axis(
+            np.array([np.deg2rad(roll_deg)]),
+            np.array([0, 0, 1]),
+        )
+        rolled_offsets = rotate_offsets_rest_basis(yaw_aligned_offsets, roll)
+        rest_positions = positions_from_offsets(rolled_offsets, parents)
+        foot_mean_y = np.mean(rest_positions[foot_indices, 1])
+        core_mean_y = np.mean(rest_positions[core_indices, 1])
+        score = core_mean_y - foot_mean_y
+        if score > best_score + 1e-8:
+            best_score = score
+            best_roll = roll_deg
+    return best_roll, best_score
+
+def get_planetzoo_rest_pose_alignment(offsets, parents, face_joint_indx=None, joint_names=None):
+    rest_positions = positions_from_offsets(offsets, parents)
+    if face_joint_indx is None:
+        return None
+    if len(face_joint_indx) == 2:
+        tail, head = face_joint_indx
+        forward = rest_positions[head] - rest_positions[tail]
+        forward[1] = 0
+    elif len(face_joint_indx) == 4:
+        r_hip, l_hip, sdr_r, sdr_l = face_joint_indx
+        across1 = rest_positions[r_hip] - rest_positions[l_hip]
+        across2 = rest_positions[sdr_r] - rest_positions[sdr_l]
+        across = safe_normalize_vectors(
+            (across1 + across2)[None],
+            fallback=np.array([1, 0, 0]),
+        )[0]
+        forward = np.cross(np.array([0, 1, 0]), across)
+    else:
+        return None
+    forward[1] = 0
+    if np.linalg.norm(forward) <= 1e-8:
+        return None
+    yaw_quat = yaw_quat_to_face_z(forward[None])
+    yaw_aligned_offsets = rotate_offsets_rest_basis(offsets, yaw_quat)
+    roll_deg, roll_score = choose_planetzoo_rest_basis_roll(yaw_aligned_offsets, parents, joint_names)
+    print(f"INFO: Planet Zoo rest-basis roll_z={roll_deg} score={roll_score}")
+    roll = Quaternions.from_angle_axis(
+        np.array([np.deg2rad(roll_deg)]),
+        np.array([0, 0, 1]),
+    )
+    return roll * yaw_quat
+
+def rotate_offsets_rest_basis(offsets, rest_align_quat):
+    if rest_align_quat is None or len(offsets) <= 1:
+        return offsets
+    new_offsets = offsets.copy()
+    q_offsets = repeat_quaternion(rest_align_quat, (len(offsets) - 1,))
+    new_offsets[1:] = q_offsets * new_offsets[1:]
+    return new_offsets
+
+def adjust_rotations_for_aligned_rest_basis(rotations, rest_align_quat):
+    if rest_align_quat is None:
+        return rotations
+    new_rots = rotations.copy()
+    frames, joints = new_rots.shape[:2]
+    q_root = repeat_quaternion(rest_align_quat, (frames,))
+    new_rots[:, 0] = new_rots[:, 0] * -q_root
+    if joints > 1:
+        q_children = repeat_quaternion(rest_align_quat, (frames, joints - 1))
+        new_rots[:, 1:] = q_children * new_rots[:, 1:] * -q_children
+    return new_rots
           
 """ put skeleton on ground (xz plane) """
 def put_on_ground(anim, ground_height=None, ground_joint_indices=None):
@@ -261,6 +359,10 @@ def get_common_features_from_T_pose(t_pose_bvh, object_type, face_joints=None):
     )
     print(f"INFO: {object_type} scale_factor={scale_factor}, ground_height={ground_height}")
     offsets = offsets_from_positions(positions_global(scaled), scaled.parents)[0]
+    rest_pose_align_quat = None
+    if object_type.startswith("PZ_"):
+        rest_pose_align_quat = get_planetzoo_rest_pose_alignment(offsets, scaled.parents, face_joints, t_pos_names)
+        offsets = rotate_offsets_rest_basis(offsets, rest_pose_align_quat)
     if object_type in ["Anaconda", "KingCobra"]: # special handel for snakes 
         suspected_foot_indices = [i for i in range(len(t_pos_names))]
     else:
@@ -274,7 +376,7 @@ def get_common_features_from_T_pose(t_pose_bvh, object_type, face_joints=None):
                 for c in children:
                     if c not in suspected_foot_indices:
                         suspected_foot_indices.append(c)
-    return root_pose_init_xz, scale_factor, ground_height, offsets, suspected_foot_indices, scaled.rotations, t_pos_names, scaled, face_joints
+    return root_pose_init_xz, scale_factor, ground_height, offsets, suspected_foot_indices, scaled.rotations, t_pos_names, scaled, face_joints, rest_pose_align_quat
 
 def get_motion_features(ric_positions, rotations, foot_contact, velocity, max_joints):
     # F = Frames# , J = joints# 
@@ -353,7 +455,7 @@ def get_bvh_cont6d_params(anim, object_type, face_joints=None):
     return cont_6d_params_reordered, r_velocity, velocity, r_rot, positions
 
 """ processes animation, and returns a new animation that aligns with humanML3D in terms of orientation and scale"""
-def get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor, ground_height, tpos_rots, offsets, squared_positions_error, face_joints=None, slice_inds=None):
+def get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor, ground_height, tpos_rots, offsets, squared_positions_error, face_joints=None, slice_inds=None, rest_pose_align_quat=None):
     if not isinstance(bvh_path, Animation):
         raw_anim, names, frame_time = BVH.load(bvh_path)
         raw_anim, names = prune_planetzoo_helper_joints(raw_anim, names, object_type)
@@ -374,6 +476,7 @@ def get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor,
     ## create new animation object in which the rotations are w.r.t the actual Tpos
     tpos_rots_correct_shape  = tpos_rots[None, 0].repeat(frames_num, axis = 0)
     rots = compute_rots_from_tpos(tpos_rots_correct_shape, processed_anim.rotations, processed_anim.parents)
+    rots = adjust_rotations_for_aligned_rest_basis(rots, rest_pose_align_quat)
     anim_positions = offsets.copy()[None, :].repeat(frames_num, axis = 0)
     anim_positions[:, 0] = processed_anim.positions[:, 0]
     # create animation object which is defined over correct tpos 
@@ -382,9 +485,9 @@ def get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor,
     return new_anim, names  
     
 """ get motion feature representation"""
-def get_motion(bvh_path, foot_contact_vel_thresh, object_type, max_joints,root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, face_joints=None, slice_inds=None):
+def get_motion(bvh_path, foot_contact_vel_thresh, object_type, max_joints,root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, face_joints=None, slice_inds=None, rest_pose_align_quat=None):
     try:
-        new_anim, names = get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor, ground_height, tpos_rots, offsets, squared_positions_error, face_joints, slice_inds)
+        new_anim, names = get_hml_aligned_anim(bvh_path, object_type, root_pose_init_xz, scale_factor, ground_height, tpos_rots, offsets, squared_positions_error, face_joints, slice_inds, rest_pose_align_quat)
         ## extract features
         # cont_6d_params, r_velocity, velocity, r_rot, global_positions = get_bvh_cont6d_params(new_anim, object_type)
         cont_6d_params, r_velocity, velocity, r_rot, global_positions = get_bvh_cont6d_params(new_anim, object_type, face_joints=face_joints)
@@ -497,8 +600,8 @@ def process_object(object_type, files_counter, frames_counter, max_joints, squar
         # extracting common characteristics. If this is not the case, disable this part
         bvh_files.remove(t_pos_path)
         
-    root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, names, tpos_anim, face_joints = get_common_features_from_T_pose(t_pos_path, object_type, face_joints=face_joints)
-    t_pos_motion, parents, max_joints, new_anim = get_motion(tpos_anim, FOOT_CONTACT_VEL_THRESH, object_type, max_joints, root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, face_joints=face_joints)
+    root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, names, tpos_anim, face_joints, rest_pose_align_quat = get_common_features_from_T_pose(t_pos_path, object_type, face_joints=face_joints)
+    t_pos_motion, parents, max_joints, new_anim = get_motion(tpos_anim, FOOT_CONTACT_VEL_THRESH, object_type, max_joints, root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, face_joints=face_joints, rest_pose_align_quat=rest_pose_align_quat)
     object_cond['tpos_first_frame'] = t_pos_motion[0]
     # create topology conditions
     joint_relations, joints_graph_dist = create_topology_edge_relations(tpos_anim.parents, max_path_len = MAX_PATH_LEN)
@@ -523,7 +626,7 @@ def process_object(object_type, files_counter, frames_counter, max_joints, squar
                 slice_ind = begin + 200
             else:
                 slice_ind = anim_len
-            motion, parents, max_joints, new_anim = get_motion(f, FOOT_CONTACT_VEL_THRESH, object_type, max_joints, root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, slice_inds=[begin, slice_ind], face_joints=face_joints)
+            motion, parents, max_joints, new_anim = get_motion(f, FOOT_CONTACT_VEL_THRESH, object_type, max_joints, root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, slice_inds=[begin, slice_ind], face_joints=face_joints, rest_pose_align_quat=rest_pose_align_quat)
             begin = slice_ind
             if motion is not None:
                 _, file_name = os.path.split(f)
