@@ -24,10 +24,11 @@ TEXT_SUFFIXES = {".txt", ".json", ".jsonl"}
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", required=True, help="AnyTop output directory containing motions/bvhs/animations.")
+    parser.add_argument("--processed-dir", required=True, help="AnyTop output directory, or a root containing per-object AnyTop directories.")
     parser.add_argument("--export-manifest", required=True, help="JSONL manifest written by planetzoo_fulltopo_bvh_export.py.")
     parser.add_argument("--text-root", default=None, help="Optional AniMo/custom text file or directory.")
     parser.add_argument("--output", default=None, help="Output JSONL path. Defaults to <processed-dir>/motion_text_manifest.jsonl.")
+    parser.add_argument("--json-output", default=None, help="Optional regular JSON manifest with summary and rows.")
     parser.add_argument("--csv-output", default=None, help="Optional CSV copy for quick spreadsheet inspection.")
     return parser.parse_args()
 
@@ -209,11 +210,37 @@ def build_manifest(processed_dir: Path, export_entries: list[dict[str, Any]], te
     return rows
 
 
+def iter_processed_dirs(processed_dir: Path) -> list[Path]:
+    if (processed_dir / "motions").is_dir():
+        return [processed_dir]
+    return sorted([p for p in processed_dir.iterdir() if p.is_dir() and (p / "motions").is_dir()])
+
+
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_json(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    status_counts: dict[str, int] = {}
+    object_counts: dict[str, int] = {}
+    for row in rows:
+        status = row.get("text_match_status", "")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        object_name = row.get("object_name") or row.get("animal_key") or Path(row["processed_motion"]).parent.parent.name
+        object_counts[object_name] = object_counts.get(object_name, 0) + 1
+    payload = {
+        "summary": {
+            "rows": len(rows),
+            "status_counts": status_counts,
+            "object_counts": object_counts,
+        },
+        "rows": rows,
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -245,8 +272,12 @@ def main() -> None:
     output = Path(args.output) if args.output else processed_dir / "motion_text_manifest.jsonl"
     export_entries = read_jsonl(Path(args.export_manifest))
     text_index = load_text_index(args.text_root)
-    rows = build_manifest(processed_dir, export_entries, text_index)
+    rows: list[dict[str, Any]] = []
+    for cur_processed_dir in iter_processed_dirs(processed_dir):
+        rows.extend(build_manifest(cur_processed_dir, export_entries, text_index))
     write_jsonl(output, rows)
+    if args.json_output:
+        write_json(Path(args.json_output), rows)
     if args.csv_output:
         write_csv(Path(args.csv_output), rows)
     matched = sum(1 for row in rows if row["text_match_status"] == "matched")

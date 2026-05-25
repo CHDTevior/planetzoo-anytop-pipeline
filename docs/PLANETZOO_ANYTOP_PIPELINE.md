@@ -58,6 +58,23 @@ H:/blender4_5/blender.exe -b --python tools/planetzoo/planetzoo_fulltopo_bvh_exp
   --only-manis-contains locomotion
 ```
 
+For larger batches, prefer one Blender process per object:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_batch_bvh_export.py `
+  --blender H:/blender4_5/blender.exe `
+  --cobra-tools H:/codex_project1/.codex-tmp/AniMo/data_generation/export_json/cobra-tools `
+  --input-root H:/AniMo4D_work/01_ovl_extracted `
+  --output-root H:/AniMo4D_work/05_fulltopo_raw_bvh `
+  --max-actions 3 `
+  --only-manis-contains locomotion `
+  --continue-on-error
+```
+
+Running a fresh Blender process for each object avoids cross-object importer
+state and makes failures resumable. Logs are written under
+`H:/AniMo4D_work/05_fulltopo_raw_bvh/logs/`.
+
 Important outputs:
 
 - `raw_bvhs/*.bvh`: raw animation BVHs
@@ -88,6 +105,19 @@ H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe -m utils.process_new
   --face_joints_names def_c_hips_joint def_c_chest_joint `
   --tpos_bvh H:/AniMo4D_work/05_fulltopo_raw_bvh_demo7/Aardvark_Female_ovl/raw_bvhs/aardvark_female__tpos.bvh
 ```
+
+Batch conversion can be run with:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_batch_anytop_process.py `
+  --raw-root H:/AniMo4D_work/05_fulltopo_raw_bvh `
+  --output-root H:/AniMo4D_work/06_anytop_processed `
+  --face-joints-names def_c_hips_joint def_c_chest_joint
+```
+
+The batch script writes `batch_process_manifest.jsonl` under the output root and
+records each object's raw directory, T-pose BVH, status, and processed clip
+count.
 
 Current Planet Zoo adjustments:
 
@@ -183,7 +213,22 @@ matched_text = 0
 missing_text = 2
 ```
 
-## 6. Visual Sanity Checks
+## 6. Dataset Statistics
+
+After conversion, summarize AnyTop-format outputs with:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/summarize_anytop_dataset.py `
+  --processed-root H:/AniMo4D_work/06_anytop_processed `
+  --output-json H:/AniMo4D_work/06_anytop_processed/dataset_summary.json `
+  --output-csv H:/AniMo4D_work/06_anytop_processed/dataset_summary_objects.csv
+```
+
+The summary reports total objects, total clips, node-count range, clip-length
+range, clips-per-object range, exact node-count distribution, exact/binned
+length distribution, and per-object rows.
+
+## 7. Visual Sanity Checks
 
 Use the AnyTop recovered-motion renderer as a sanity check. The camera itself is
 not part of the dataset and will not affect training or dataset merging.
@@ -198,7 +243,7 @@ H:/AniMo4D_work/06_anytop_demo/PZ_Aardvark_Female_demo13_rollz_neg90_contact/any
 The final verified transform is the one with Planet Zoo global roll
 `Z = -90 degrees`.
 
-## 7. What Should Be Versioned
+## 8. What Should Be Versioned
 
 Version in git:
 
@@ -213,4 +258,3 @@ Do not version in git:
 - Raw BVH batches derived from game assets
 - Processed `.npy`, `.mp4`, `.gif`, or large dataset outputs
 - Local Python environments
-
