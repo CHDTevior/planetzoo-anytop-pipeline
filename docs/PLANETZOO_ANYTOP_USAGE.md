@@ -184,6 +184,34 @@ shape = (frames - 1, joints, 13)
 12:13  foot contact flag
 ```
 
+## Step 6. Render VLM Preview Images
+
+For captioning or visual QA, render compact JPEG previews instead of full MP4s.
+Each object gets one rest-pose image. Each motion gets one storyboard image with
+8 sampled frames, a small axis marker, and the root trajectory.
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/render_anytop_vlm_previews.py `
+  --processed-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --output-root H:/AniMo4D_work/07_vlm_previews_autoroll `
+  --workers 10 `
+  --frames-per-action 8 `
+  --cell-size 220 `
+  --rest-size 520 `
+  --quality 88
+```
+
+Current preview output:
+
+```text
+Rest previews: 473
+Action previews: 82035
+Total JPEGs: 82508
+Approx size: 3.5 GB
+Manifest: H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.jsonl
+CSV: H:/AniMo4D_work/07_vlm_previews_autoroll/vlm_preview_manifest.csv
+```
+
 ## Retry Individual Objects
 
 BVH export retry:
@@ -221,7 +249,8 @@ Do not commit extracted game assets or generated datasets:
 ```text
 H:/AniMo4D_work/01_ovl_extracted
 H:/AniMo4D_work/05_fulltopo_raw_bvh_full
-H:/AniMo4D_work/06_anytop_processed_full
+H:/AniMo4D_work/06_anytop_processed_full_autoroll
+H:/AniMo4D_work/07_vlm_previews_autoroll
 ```
 
 Only commit scripts, docs, and small metadata examples.
