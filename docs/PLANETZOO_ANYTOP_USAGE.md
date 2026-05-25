@@ -15,6 +15,9 @@ G:/Steam/steamapps/common/Planet Zoo
 Extracted OVL assets:
 H:/AniMo4D_work/01_ovl_extracted
 
+Canonical organized dataset folder:
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1
+
 Blender:
 H:/blender4_5/blender.exe
 
@@ -27,28 +30,48 @@ H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe
 
 ## Outputs
 
-Use separate output roots for demo runs and full runs.
+The validated local dataset is organized under one folder:
 
 ```text
-Raw full-topology BVH:
-H:/AniMo4D_work/05_fulltopo_raw_bvh_full
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1
+```
 
-AnyTop processed dataset:
-H:/AniMo4D_work/06_anytop_processed_full
+It contains:
+
+```text
+source_assets/ovl_extracted
+raw_bvh_full
+processed_anytop_autoroll
+vlm_previews
+logs
+README.md
+DATASET_INDEX.json
+```
+
+Compatibility junctions are left at the old top-level paths so existing
+manifests and commands still work:
+
+```text
+H:/AniMo4D_work/01_ovl_extracted
+H:/AniMo4D_work/05_fulltopo_raw_bvh_full
+H:/AniMo4D_work/06_anytop_processed_full_autoroll
+H:/AniMo4D_work/07_vlm_previews_autoroll
 ```
 
 Important files produced by the full run:
 
 ```text
-H:/AniMo4D_work/05_fulltopo_raw_bvh_full/export_manifest.jsonl
-H:/AniMo4D_work/05_fulltopo_raw_bvh_full/parallel_bvh_export_status.jsonl
-H:/AniMo4D_work/06_anytop_processed_full/parallel_anytop_process_status.jsonl
-H:/AniMo4D_work/06_anytop_processed_full/dataset_summary.json
-H:/AniMo4D_work/06_anytop_processed_full/dataset_summary_objects.csv
-H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.json
-H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.jsonl
-H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.csv
-H:/AniMo4D_work/06_anytop_processed_full/full_pipeline_report.json
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/raw_bvh_full/export_manifest.jsonl
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/raw_bvh_full/parallel_bvh_export_status.jsonl
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/parallel_anytop_process_status.jsonl
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/dataset_summary.json
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/dataset_summary_objects.csv
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_text_manifest.json
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_text_manifest.jsonl
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/motion_text_manifest.csv
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll/rest_pose_validation.json
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/vlm_previews/vlm_preview_manifest.jsonl
+H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/vlm_previews/vlm_preview_manifest.csv
 ```
 
 ## Step 1. Export Full-Topology BVH
@@ -118,11 +141,11 @@ Without external captions:
 
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/build_planetzoo_text_manifest.py `
-  --processed-dir H:/AniMo4D_work/06_anytop_processed_full `
+  --processed-dir H:/AniMo4D_work/06_anytop_processed_full_autoroll `
   --export-manifest H:/AniMo4D_work/05_fulltopo_raw_bvh_full/export_manifest.jsonl `
-  --output H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.jsonl `
-  --json-output H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.json `
-  --csv-output H:/AniMo4D_work/06_anytop_processed_full/motion_text_manifest.csv
+  --output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.jsonl `
+  --json-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.json `
+  --csv-output H:/AniMo4D_work/06_anytop_processed_full_autoroll/motion_text_manifest.csv
 ```
 
 With external captions, add:
@@ -140,17 +163,17 @@ Fast summary without reading every array fully:
 
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/summarize_anytop_dataset.py `
-  --processed-root H:/AniMo4D_work/06_anytop_processed_full `
-  --output-json H:/AniMo4D_work/06_anytop_processed_full/dataset_summary.json `
-  --output-csv H:/AniMo4D_work/06_anytop_processed_full/dataset_summary_objects.csv
+  --processed-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --output-json H:/AniMo4D_work/06_anytop_processed_full_autoroll/dataset_summary.json `
+  --output-csv H:/AniMo4D_work/06_anytop_processed_full_autoroll/dataset_summary_objects.csv
 ```
 
 For a slower validation pass that checks every value is finite:
 
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/summarize_anytop_dataset.py `
-  --processed-root H:/AniMo4D_work/06_anytop_processed_full `
-  --output-json H:/AniMo4D_work/06_anytop_processed_full/dataset_summary_finite.json `
+  --processed-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
+  --output-json H:/AniMo4D_work/06_anytop_processed_full_autoroll/dataset_summary_finite.json `
   --check-finite
 ```
 
@@ -233,7 +256,7 @@ AnyTop retry:
 ```powershell
 H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_parallel_anytop_process.py `
   --raw-root H:/AniMo4D_work/05_fulltopo_raw_bvh_full `
-  --output-root H:/AniMo4D_work/06_anytop_processed_full `
+  --output-root H:/AniMo4D_work/06_anytop_processed_full_autoroll `
   --objects Red_Panda_Female_ovl `
   --python H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe `
   --repo-root H:/codex_project1/.codex-tmp/planetzoo-anytop-pipeline-upload `
