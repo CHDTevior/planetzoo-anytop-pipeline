@@ -75,6 +75,20 @@ Running a fresh Blender process for each object avoids cross-object importer
 state and makes failures resumable. Logs are written under
 `H:/AniMo4D_work/05_fulltopo_raw_bvh/logs/`.
 
+For the full Planet Zoo pass, use the parallel exporter and omit
+`--max-actions`:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_parallel_bvh_export.py `
+  --blender H:/blender4_5/blender.exe `
+  --cobra-tools H:/codex_project1/.codex-tmp/AniMo/data_generation/export_json/cobra-tools `
+  --input-root H:/AniMo4D_work/01_ovl_extracted `
+  --output-root H:/AniMo4D_work/05_fulltopo_raw_bvh_full `
+  --workers 4 `
+  --only-manis-contains locomotion `
+  --overwrite
+```
+
 Important outputs:
 
 - `raw_bvhs/*.bvh`: raw animation BVHs
@@ -118,6 +132,21 @@ H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/plan
 The batch script writes `batch_process_manifest.jsonl` under the output root and
 records each object's raw directory, T-pose BVH, status, and processed clip
 count.
+
+For the full pass, prefer the parallel converter and skip sanity-check MP4
+rendering. This keeps `motions/*.npy` and processed `bvhs/*.bvh`, while avoiding
+hours of video generation:
+
+```powershell
+H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe tools/planetzoo/planetzoo_parallel_anytop_process.py `
+  --raw-root H:/AniMo4D_work/05_fulltopo_raw_bvh_full `
+  --output-root H:/AniMo4D_work/06_anytop_processed_full `
+  --python H:/codex_project1/.codex-tmp/venvs/cobra/Scripts/python.exe `
+  --repo-root H:/codex_project1/.codex-tmp/planetzoo-anytop-pipeline-upload `
+  --workers 6 `
+  --overwrite `
+  --skip-animations
+```
 
 Current Planet Zoo adjustments:
 

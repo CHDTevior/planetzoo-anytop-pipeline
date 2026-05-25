@@ -158,24 +158,41 @@ def candidate_keys(entry: dict[str, Any], processed_stem: str) -> list[str]:
     return [key for key in keys if key]
 
 
-def find_export_entry(processed_stem: str, entries: list[dict[str, Any]]) -> dict[str, Any] | None:
-    motion_entries = [entry for entry in entries if entry.get("sample_type", "motion") == "motion"]
-    matches = [
-        entry
-        for entry in motion_entries
-        if entry.get("raw_bvh_stem") and entry["raw_bvh_stem"] in processed_stem
-    ]
-    if matches:
-        return max(matches, key=lambda item: len(item["raw_bvh_stem"]))
+def build_export_index(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        entry["raw_bvh_stem"]: entry
+        for entry in entries
+        if entry.get("sample_type", "motion") == "motion" and entry.get("raw_bvh_stem")
+    }
+
+
+def find_export_entry(processed_stem: str, processed_object_name: str, export_index: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    prefix = processed_object_name + "_"
+    if processed_stem.startswith(prefix):
+        tail = processed_stem[len(prefix):]
+        stem_parts = tail.rsplit("_", 1)
+        if len(stem_parts) == 2 and stem_parts[1].isdigit():
+            direct = export_index.get(stem_parts[0])
+            if direct is not None:
+                return direct
+    stem_parts = processed_stem.rsplit("_", 1)
+    if len(stem_parts) == 2 and stem_parts[1].isdigit():
+        processed_without_counter = stem_parts[0]
+        for raw_stem in export_index:
+            if processed_without_counter.endswith(raw_stem):
+                return export_index[raw_stem]
+    for raw_stem, entry in export_index.items():
+        if raw_stem in processed_stem:
+            return entry
     return None
 
 
-def build_manifest(processed_dir: Path, export_entries: list[dict[str, Any]], text_index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def build_manifest(processed_dir: Path, export_index: dict[str, dict[str, Any]], text_index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     motions_dir = processed_dir / "motions"
     for motion_path in sorted(motions_dir.glob("*.npy")):
         processed_stem = motion_path.stem
-        entry = find_export_entry(processed_stem, export_entries)
+        entry = find_export_entry(processed_stem, processed_dir.name, export_index)
         texts: list[str] = []
         text_sources: list[str] = []
         text_match_key = ""
@@ -271,10 +288,11 @@ def main() -> None:
     processed_dir = Path(args.processed_dir)
     output = Path(args.output) if args.output else processed_dir / "motion_text_manifest.jsonl"
     export_entries = read_jsonl(Path(args.export_manifest))
+    export_index = build_export_index(export_entries)
     text_index = load_text_index(args.text_root)
     rows: list[dict[str, Any]] = []
     for cur_processed_dir in iter_processed_dirs(processed_dir):
-        rows.extend(build_manifest(cur_processed_dir, export_entries, text_index))
+        rows.extend(build_manifest(cur_processed_dir, export_index, text_index))
     write_jsonl(output, rows)
     if args.json_output:
         write_json(Path(args.json_output), rows)

@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-objects", type=int, default=None)
     parser.add_argument("--max-actions", type=int, default=None)
     parser.add_argument("--only-manis-contains", default=None)
+    parser.add_argument("--no-root-manifest", action="store_true", help="Skip writing output_root summary/manifest files.")
     return parser.parse_args(argv)
 
 
@@ -353,10 +354,11 @@ def main() -> None:
             print(f"FAILED {object_dir}")
             traceback.print_exc()
     output_root.mkdir(parents=True, exist_ok=True)
-    (output_root / "export_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    with (output_root / "export_manifest.jsonl").open("w", encoding="utf-8") as out_f:
-        for manifest_path in manifest_paths:
-            out_f.write(manifest_path.read_text(encoding="utf-8"))
+    if not args.no_root_manifest:
+        (output_root / "export_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        with (output_root / "export_manifest.jsonl").open("w", encoding="utf-8") as out_f:
+            for manifest_path in manifest_paths:
+                out_f.write(manifest_path.read_text(encoding="utf-8"))
     print("SUMMARY", summary)
 
 

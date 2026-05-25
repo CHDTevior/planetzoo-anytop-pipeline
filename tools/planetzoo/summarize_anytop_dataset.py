@@ -18,6 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
     parser.add_argument("--length-bin", type=int, default=10)
+    parser.add_argument("--check-finite", action="store_true")
+    parser.add_argument("--include-foot-contact", action="store_true")
     return parser.parse_args()
 
 
@@ -60,13 +62,18 @@ def main() -> None:
         motions = sorted((obj_dir / "motions").glob("*.npy"))
         clip_lengths = []
         feature_dims = []
-        finite = True
+        finite = None if not args.check_finite else True
 
         for motion_path in motions:
-            arr = np.load(motion_path)
+            arr = np.load(motion_path, mmap_mode="r")
             clip_lengths.append(int(arr.shape[0]))
             feature_dims.append(int(arr.shape[-1]))
-            finite = finite and bool(np.isfinite(arr).all())
+            cur_finite = bool(np.isfinite(arr).all()) if args.check_finite else None
+            if args.check_finite:
+                finite = bool(finite and cur_finite)
+            foot_contact_sum = None
+            if args.include_foot_contact and arr.shape[-1] > 12:
+                foot_contact_sum = float(arr[..., 12].sum())
             clip_rows.append(
                 {
                     "object_name": object_name,
@@ -74,8 +81,8 @@ def main() -> None:
                     "nodes": int(arr.shape[1]),
                     "length": int(arr.shape[0]),
                     "feature_dim": int(arr.shape[-1]),
-                    "finite": bool(np.isfinite(arr).all()),
-                    "foot_contact_sum": float(arr[..., 12].sum()) if arr.shape[-1] > 12 else None,
+                    "finite": cur_finite,
+                    "foot_contact_sum": foot_contact_sum,
                 }
             )
             length_counter[int(arr.shape[0])] += 1

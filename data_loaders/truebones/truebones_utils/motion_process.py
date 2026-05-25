@@ -535,9 +535,10 @@ def process_object(object_type, files_counter, frames_counter, max_joints, squar
                 np.save(pjoin(save_dir, MOTION_DIR, name + '.npy'), motion)
                 BVH.save(pjoin(save_dir, BVHS_DIR, name+".bvh"), new_anim, names)
                 # create mp4 from rotations (sanity check)
-                positions = recover_from_bvh_ric_np(motion)
-                fc = [[j for j in range(len(parents)) if motion[f, j , 12] != 0] for f in range(motion.shape[0])]
-                plot_general_skeleton_3d_motion(pjoin(save_dir, ANIMATIONS_DIR, name+"_from_ric.mp4"), parents, positions, dataset="truebones", title="", fps=20, face_joints=face_joints if face_joints is not None else FACE_JOINTS[object_type], fc = fc)
+                if os.environ.get("ANYTOP_SKIP_ANIMATIONS", "").lower() not in {"1", "true", "yes"}:
+                    positions = recover_from_bvh_ric_np(motion)
+                    fc = [[j for j in range(len(parents)) if motion[f, j , 12] != 0] for f in range(motion.shape[0])]
+                    plot_general_skeleton_3d_motion(pjoin(save_dir, ANIMATIONS_DIR, name+"_from_ric.mp4"), parents, positions, dataset="truebones", title="", fps=20, face_joints=face_joints if face_joints is not None else FACE_JOINTS[object_type], fc = fc)
         
             else:
                 print(f'failed to process file: {f}, slice {begin}:{slice_ind}')

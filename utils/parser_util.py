@@ -264,9 +264,9 @@ def process_new_skeleton_args():
                            motion denormalization.")
     group.add_argument("--save_dir", required=True, type=str,
                        help="Output directory.")
-    group.add_argument("--face_joints_names", default=["RLeg1", "LLeg1", "RArm1", "LArm1"], type=str, nargs=4,
-                       help="Four joints defining skeleton orientation ([right hip, left hip, right shoulder, left shoulder] or equivalent). \
-                           Used to align the skeleton to Z+ and XZ plane.")
+    group.add_argument("--face_joints_names", default=["RLeg1", "LLeg1", "RArm1", "LArm1"], type=str, nargs="+",
+                       help="Joints defining skeleton orientation. Four joints use the original AnyTop left/right \
+                           hip-shoulder convention; two joints use a centerline direction such as Planet Zoo hips->chest.")
     group.add_argument("--tpos_bvh", default='', type=str,
                        help="A BVH file of the character's natural rest pose for meaningful rotation learning. \
                             If missing, the code selects a pose from the provided BVH files.")
