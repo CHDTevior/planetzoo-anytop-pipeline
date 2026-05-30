@@ -227,6 +227,25 @@ If the pooled AnyTop layout already exists, rerun this step after rebuilding the
 text manifest so the packed manifest paths point at the pooled `motions/` and
 `bvhs/` folders.
 
+## Step 4b. Repair Abnormal Motion Values
+
+After packing, run the conservative value repair pass before publishing or
+training. It scans pooled `motions/*.npy`, moves clips with non-finite values or
+`abs(value) > 100` into a quarantine folder, moves the matching BVH files with
+them, backs up metadata files, recomputes `cond.npy` mean/std from the remaining
+motions, and synchronizes the caption and pack manifests.
+
+```powershell
+C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe tools/planetzoo/repair_bad_motion_values.py `
+  --layout-root H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout `
+  --threshold 100 `
+  --std-floor 1e-6
+```
+
+Use `--dry-run` first if you only want the bad-file list. The real run writes
+`repair_bad_values_manifest.json` beside `cond.npy`, creates a timestamped
+backup folder, and keeps quarantined files outside the training layout.
+
 ## Step 5. Summarize Dataset
 
 Fast summary without reading every array fully:
@@ -259,14 +278,14 @@ Zero-motion objects: 83
 Raw motion BVH files: 81685
 
 AnyTop processed objects: 473
-AnyTop processed clips: 82035
+AnyTop processed clips after value repair: 82003
 Feature dimension: 13
 Node count range: 88-411
 Clip length range: 2-237
 Clips per object range: 23-314
 Matched AniMosity4D captions: 32124
-Codex filename/action drafts: 49911
-Clean training caption JSON rows: 82035
+Codex filename/action drafts: 49879
+Clean training caption JSON rows: 82003
 Captions per row: 5
 ```
 
