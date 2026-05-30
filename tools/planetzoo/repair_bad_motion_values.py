@@ -330,6 +330,31 @@ def update_pack_manifest(root: Path, bad_names: set[str], dry_run: bool) -> int:
     return removed
 
 
+def load_pack_manifest_counts(root: Path) -> dict[str, Any]:
+    path = root / "pack_manifest.jsonl"
+    link_counts: Counter[str] = Counter()
+    if not path.exists():
+        return {"link_counts": {}}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            link_counts[str(row.get("materialization", ""))] += 1
+    return {"link_counts": dict(sorted(link_counts.items()))}
+
+
+def load_text_status_counts(root: Path) -> dict[str, int]:
+    path = root / "motion_text_manifest.json"
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    summary_counts = data.get("summary", {}).get("status_counts")
+    if isinstance(summary_counts, dict):
+        return {str(k): int(v) for k, v in summary_counts.items()}
+    return dict(sorted(Counter(row.get("text_match_status", "") for row in data.get("rows", [])).items()))
+
+
 def update_object_index_and_summaries(root: Path, dry_run: bool) -> dict[str, Any]:
     cond = np.load(root / "cond.npy", allow_pickle=True).item()
     old_sources = {}
@@ -379,6 +404,7 @@ def update_object_index_and_summaries(root: Path, dry_run: bool) -> dict[str, An
 
     pack_summary_path = root / "pack_summary.json"
     pack_summary = json.loads(pack_summary_path.read_text(encoding="utf-8")) if pack_summary_path.exists() else {}
+    pack_manifest_counts = load_pack_manifest_counts(root)
     pack_summary.update(
         {
             "objects": len(rows),
@@ -387,7 +413,9 @@ def update_object_index_and_summaries(root: Path, dry_run: bool) -> dict[str, An
             "animations": 0,
             "max_joints": max_joints,
             "total_frames": total_frames,
+            "link_counts": pack_manifest_counts["link_counts"],
             "text_manifest_rows": total_motions,
+            "text_status_counts": load_text_status_counts(root),
             "repair_note": "Filtered abnormal motion values and recomputed cond mean/std.",
         }
     )

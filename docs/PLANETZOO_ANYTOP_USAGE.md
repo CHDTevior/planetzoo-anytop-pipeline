@@ -238,7 +238,7 @@ motions, and synchronizes the caption and pack manifests.
 ```powershell
 C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe tools/planetzoo/repair_bad_motion_values.py `
   --layout-root H:/AniMo4D_work/PlanetZoo_AnyTop_Dataset_v1/processed_anytop_autoroll_anytop_layout `
-  --threshold 100 `
+  --threshold 22.53 `
   --std-floor 1e-6
 ```
 
@@ -278,14 +278,14 @@ Zero-motion objects: 83
 Raw motion BVH files: 81685
 
 AnyTop processed objects: 473
-AnyTop processed clips after value repair: 82003
+AnyTop processed clips after value repair: 81994
 Feature dimension: 13
 Node count range: 88-411
 Clip length range: 2-237
 Clips per object range: 23-314
 Matched AniMosity4D captions: 32124
-Codex filename/action drafts: 49879
-Clean training caption JSON rows: 82003
+Codex filename/action drafts: 49870
+Clean training caption JSON rows: 81994
 Captions per row: 5
 ```
 
