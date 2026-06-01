@@ -747,7 +747,7 @@ def recover_from_bvh_ric_np(data):
     return positions
 
 """ recover xyz positions from rot (root relative positions) torch """
-def recover_from_bvh_rot_np(data, parents, offsets):
+def recover_from_bvh_rot_np(data, parents, offsets, apply_root_cancel=False):
     r_rot_quat, r_pos = recover_root_quat_and_pos_np(data[:,0])
     r_rot_cont6d = get_6d_rep(r_rot_quat)
     start_indx = 3
@@ -759,7 +759,10 @@ def recover_from_bvh_rot_np(data, parents, offsets):
     for j, p in enumerate(parents[1:], 1):
         cont6d_params[:, p] = cont6d_params_hml_order[:, j]
     rotations = Quaternions.from_transforms(cont6d_params)
-    rotations[:, 0] = -r_rot_quat * rotations[:, 0]
+    # The reordered child token for a root child already carries the root's
+    # frame-varying rotation. Applying r_rot_quat again doubles global turns.
+    if apply_root_cancel:
+        rotations[:, 0] = -r_rot_quat * rotations[:, 0]
     positions = offsets[None].repeat(data.shape[0], axis=0)
     positions[:, 0] = r_pos
     anim = Animation(rotations=rotations, positions=positions, parents=parents, offsets=offsets, orients=Quaternions.id(0))

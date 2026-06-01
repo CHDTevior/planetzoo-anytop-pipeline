@@ -189,10 +189,16 @@ The last dimension is:
 
 ```text
 0:3    local/root-invariant joint position
-3:9    local joint rotation in 6D representation
+3:9    6D rotation representation
 9:12   local joint velocity
 12:13  foot contact flag
 ```
+
+For rotation-only FK recovery, use `recover_from_bvh_rot_np` with its default
+root handling. The root child's reordered rotation token already carries the
+frame-varying root rotation, so applying the extra official root-cancel step
+again doubles global turns in Planet Zoo turn clips. The old AnyTop behavior can
+still be reproduced with `apply_root_cancel=True` for debugging.
 
 The sequence is one frame shorter than the raw BVH because velocity and foot
 contact depend on adjacent frames.

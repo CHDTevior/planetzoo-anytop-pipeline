@@ -295,10 +295,16 @@ The processed feature layout follows AnyTop:
 shape = (frames - 1, joints, 13)
 
 0:3    local/root-invariant joint position
-3:9    local joint rotation in 6D representation
+3:9    6D rotation representation
 9:12   local joint velocity
 12:13  foot contact flag
 ```
+
+When validating the `3:9` rotation path with FK, call
+`recover_from_bvh_rot_np(motion, parents, offsets)` with the default root
+handling. The compatibility option `apply_root_cancel=True` reproduces the
+official AnyTop decoder line, but it double-applies global turn yaw on the
+Planet Zoo processed data.
 
 ## Step 6. Render VLM Preview Images
 
