@@ -585,7 +585,19 @@ def find_tpos_path(bvh_files):
      
 """ creates processed tensors for all the files of a given object. Returens statistics and the object condition,
 which includes tpos, relation/distances matrices, offsets, parents, joints names, kinematic chains, mean and std"""    
-def process_object(object_type, files_counter, frames_counter, max_joints, squared_positions_error, save_dir = DATASET_DIR, face_joints=None, bvhs_dir=None, t_pos_path=None):
+def process_object(
+    object_type,
+    files_counter,
+    frames_counter,
+    max_joints,
+    squared_positions_error,
+    save_dir=DATASET_DIR,
+    face_joints=None,
+    bvhs_dir=None,
+    t_pos_path=None,
+    max_clip_frames=240,
+    clip_step_frames=200,
+):
     object_cond = dict()
     if bvhs_dir is None:
         bvhs_dir = pjoin(RAW_DATA_DIR, object_type)
@@ -622,8 +634,8 @@ def process_object(object_type, files_counter, frames_counter, max_joints, squar
         begin = 0
         slice_ind = anim_len
         while begin < anim_len:
-            if anim_len - begin > 240:
-                slice_ind = begin + 200
+            if max_clip_frames and max_clip_frames > 0 and anim_len - begin > max_clip_frames:
+                slice_ind = begin + clip_step_frames
             else:
                 slice_ind = anim_len
             motion, parents, max_joints, new_anim = get_motion(f, FOOT_CONTACT_VEL_THRESH, object_type, max_joints, root_pose_init_xz, scale_factor, ground_height, offsets, foot_indices, tpos_rots, squared_positions_error, slice_inds=[begin, slice_ind], face_joints=face_joints, rest_pose_align_quat=rest_pose_align_quat)
@@ -964,7 +976,7 @@ def process_single_object_type(object_type, save_dir):
     np.save(pjoin(save_dir, "cond.npy"), cond)
     
     
-def process_skeleton(object_name, bvh_dir, face_joints, save_dir, tpos_bvh=None):
+def process_skeleton(object_name, bvh_dir, face_joints, save_dir, tpos_bvh=None, max_clip_frames=240, clip_step_frames=200):
     ## prepare
     os.makedirs(pjoin(save_dir, MOTION_DIR), exist_ok=True)
     os.makedirs(pjoin(save_dir, ANIMATIONS_DIR), exist_ok=True)
@@ -978,7 +990,19 @@ def process_skeleton(object_name, bvh_dir, face_joints, save_dir, tpos_bvh=None)
     squared_positions_error = dict()
     cond = dict()
     cur_counter = files_counter
-    files_counter, frames_counter, max_joints, object_cond = process_object(object_name, files_counter, frames_counter, max_joints, squared_positions_error, save_dir=save_dir, bvhs_dir=bvh_dir, face_joints=face_joints, t_pos_path=tpos_bvh)
+    files_counter, frames_counter, max_joints, object_cond = process_object(
+        object_name,
+        files_counter,
+        frames_counter,
+        max_joints,
+        squared_positions_error,
+        save_dir=save_dir,
+        bvhs_dir=bvh_dir,
+        face_joints=face_joints,
+        t_pos_path=tpos_bvh,
+        max_clip_frames=max_clip_frames,
+        clip_step_frames=clip_step_frames,
+    )
     cond[object_name] = object_cond
     objects_counter[object_name] = files_counter - cur_counter 
 

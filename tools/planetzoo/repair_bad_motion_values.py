@@ -273,8 +273,12 @@ def row_motion_basename(row: dict[str, Any]) -> str | None:
 def update_motion_text_manifest(root: Path, bad_names: set[str], dry_run: bool) -> dict[str, Any]:
     path = root / "motion_text_manifest.json"
     data = json.loads(path.read_text(encoding="utf-8"))
-    before_rows = len(data["rows"])
-    rows = [row for row in data["rows"] if row_motion_basename(row) not in bad_names]
+    source_rows = data.get("rows", [])
+    packed_schema = isinstance(source_rows, int)
+    if packed_schema:
+        source_rows = data.get("items", [])
+    before_rows = len(source_rows)
+    rows = [row for row in source_rows if row_motion_basename(row) not in bad_names]
     status_counts = Counter(row.get("text_match_status", "") for row in rows)
     summary = data.get("summary", {})
     summary["rows"] = len(rows)
@@ -282,7 +286,11 @@ def update_motion_text_manifest(root: Path, bad_names: set[str], dry_run: bool) 
     summary["object_count"] = len({row.get("object_key", "") for row in rows})
     summary["unique_action_short_count"] = len({row.get("action_short", "") for row in rows})
     data["summary"] = summary
-    data["rows"] = rows
+    if packed_schema:
+        data["rows"] = len(rows)
+        data["items"] = rows
+    else:
+        data["rows"] = rows
     if not dry_run:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -352,7 +360,10 @@ def load_text_status_counts(root: Path) -> dict[str, int]:
     summary_counts = data.get("summary", {}).get("status_counts")
     if isinstance(summary_counts, dict):
         return {str(k): int(v) for k, v in summary_counts.items()}
-    return dict(sorted(Counter(row.get("text_match_status", "") for row in data.get("rows", [])).items()))
+    rows = data.get("rows", [])
+    if isinstance(rows, int):
+        rows = data.get("items", [])
+    return dict(sorted(Counter(row.get("text_match_status", "") for row in rows).items()))
 
 
 def update_object_index_and_summaries(root: Path, dry_run: bool) -> dict[str, Any]:

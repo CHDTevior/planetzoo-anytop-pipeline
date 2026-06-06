@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-objects", type=int, default=None)
     parser.add_argument("--max-actions", type=int, default=None)
     parser.add_argument("--only-manis-contains", default=None)
+    parser.add_argument(
+        "--target-text-root",
+        default=None,
+        help="Optional AniMo4D text directory. When set, export only actions whose raw BVH stem is present there.",
+    )
     parser.add_argument("--no-root-manifest", action="store_true", help="Skip writing output_root summary/manifest files.")
     return parser.parse_args(argv)
 
@@ -53,6 +58,39 @@ def action_short_name(ms2_stem: str, action_name: str) -> str:
         if action_name.startswith(prefix):
             return action_name[len(prefix) :]
     return action_name
+
+
+def expected_raw_stem_from_text_name(name: str) -> str | None:
+    if not name.endswith("_keypoints.json.txt"):
+        return None
+    base = name[: -len("_keypoints.json.txt")]
+    match = re.match(r"^(.+?)__(animation(?:not)?motionextracted[^.]+)\.([A-Za-z0-9]+)_(.+)$", base)
+    if not match:
+        return None
+    animal, anim_group, maniset, action = match.groups()
+    return f"{animal}__{anim_group}_{maniset}__{action}"
+
+
+def object_key_from_raw_stem(raw_stem: str) -> str:
+    animal = raw_stem.split("__", 1)[0]
+    return "_".join(part.capitalize() for part in animal.split("_"))
+
+
+def load_target_stems(text_root: str | None) -> dict[str, set[str]] | None:
+    if not text_root:
+        return None
+    root = Path(text_root)
+    files = [root] if root.is_file() else sorted(root.glob("*.txt"))
+    targets: dict[str, set[str]] = {}
+    skipped = 0
+    for path in files:
+        raw_stem = expected_raw_stem_from_text_name(path.name)
+        if raw_stem is None:
+            skipped += 1
+            continue
+        targets.setdefault(object_key_from_raw_stem(raw_stem), set()).add(raw_stem.lower())
+    print(f"TARGET_TEXT_INDEX files={len(files)} objects={len(targets)} skipped={skipped}")
+    return targets
 
 
 def safe_clear_scene() -> None:
@@ -221,7 +259,16 @@ def promote_single_child_root(bvh_path: Path) -> bool:
     return True
 
 
-def process_object_dir(object_dir: Path, output_root: Path, import_ms2, import_manis, reporter, max_actions, only_manis_contains):
+def process_object_dir(
+    object_dir: Path,
+    output_root: Path,
+    import_ms2,
+    import_manis,
+    reporter,
+    max_actions,
+    only_manis_contains,
+    target_stems_by_object,
+):
     ms2_files = sorted(object_dir.glob("*.ms2"))
     manis_files = sorted(object_dir.glob("*.manis"))
     if not ms2_files or not manis_files:
@@ -234,6 +281,12 @@ def process_object_dir(object_dir: Path, output_root: Path, import_ms2, import_m
     if object_manifest_path.exists():
         object_manifest_path.unlink()
     exported = 0
+    target_stems = None
+    if target_stems_by_object is not None:
+        target_stems = target_stems_by_object.get(safe_name(object_dir.stem), set())
+        if not target_stems:
+            print(f"SKIP {object_dir.name}: no target text rows")
+            return 0, object_manifest_path
 
     for manis_path in manis_files:
         if only_manis_contains and only_manis_contains.lower() not in manis_path.name.lower():
@@ -270,7 +323,12 @@ def process_object_dir(object_dir: Path, output_root: Path, import_ms2, import_m
             with object_manifest_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rest_entry, ensure_ascii=False) + "\n")
 
-        import_manis.load(reporter=reporter, filepath=str(manis_path))
+        try:
+            import_manis.load(reporter=reporter, filepath=str(manis_path))
+        except Exception:
+            print(f"MANIS_IMPORT_FAILED {object_dir.name} :: {manis_path.name}")
+            traceback.print_exc()
+            continue
         action_count_for_manis = 0
         for action in list(bpy.data.actions):
             if action.id_root != "OBJECT":
@@ -279,6 +337,9 @@ def process_object_dir(object_dir: Path, output_root: Path, import_ms2, import_m
             if ms2_stem[:-1] not in safe_action_name:
                 continue
             bvh_name = f"{safe_name(ms2_stem)}__{safe_name(manis_path.stem)}__{safe_action_name}.bvh"
+            raw_bvh_stem = Path(bvh_name).stem
+            if target_stems is not None and raw_bvh_stem.lower() not in target_stems:
+                continue
             export_bvh(armature, action, object_out / "raw_bvhs" / bvh_name)
             print(f"EXPORTED {bvh_name}")
             short_action = action_short_name(ms2_stem, action.name)
@@ -293,7 +354,7 @@ def process_object_dir(object_dir: Path, output_root: Path, import_ms2, import_m
                 "action_short": short_action,
                 "source_motion_key": f"{animal_key}@{short_action}",
                 "raw_bvh": str((object_out / "raw_bvhs" / bvh_name).resolve()),
-                "raw_bvh_stem": Path(bvh_name).stem,
+                "raw_bvh_stem": raw_bvh_stem,
             }
             with object_manifest_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(manifest_entry, ensure_ascii=False) + "\n")
@@ -326,6 +387,7 @@ def main() -> None:
 
     bpy.ops.preferences.addon_enable(module="io_anim_bvh")
     reporter = Reporter()
+    target_stems_by_object = load_target_stems(args.target_text_root)
 
     if args.objects:
         object_dirs = [input_root / name for name in args.objects]
@@ -346,6 +408,7 @@ def main() -> None:
                 reporter,
                 args.max_actions,
                 args.only_manis_contains,
+                target_stems_by_object,
             )
             summary[object_dir.name] = count
             if manifest_path.exists():

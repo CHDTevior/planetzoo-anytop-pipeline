@@ -26,6 +26,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip-complete", action="store_true")
     parser.add_argument("--skip-animations", action="store_true", help="Skip AnyTop sanity-check MP4 rendering.")
+    parser.add_argument(
+        "--max-clip-frames",
+        type=int,
+        default=240,
+        help="Split BVHs longer than this many source frames. Set <=0 to disable splitting.",
+    )
+    parser.add_argument(
+        "--clip-step-frames",
+        type=int,
+        default=200,
+        help="Step size used when max-clip-frames triggers splitting.",
+    )
     return parser.parse_args()
 
 
@@ -130,6 +142,10 @@ def process_one(raw_object_dir: Path, args: argparse.Namespace, logs_dir: Path, 
         *args.face_joints_names,
         "--tpos_bvh",
         str(tpos),
+        "--max_clip_frames",
+        str(args.max_clip_frames),
+        "--clip_step_frames",
+        str(args.clip_step_frames),
     ]
     env = os.environ.copy()
     if args.skip_animations:

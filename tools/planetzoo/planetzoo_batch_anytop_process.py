@@ -30,6 +30,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--objects", nargs="*", default=None, help="Optional raw object directory names to process.")
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum number of objects to process.")
     parser.add_argument("--overwrite", action="store_true", help="Reprocess objects even when cond.npy already exists.")
+    parser.add_argument(
+        "--max-clip-frames",
+        type=int,
+        default=240,
+        help="Split BVHs longer than this many source frames. Set <=0 to disable splitting.",
+    )
+    parser.add_argument(
+        "--clip-step-frames",
+        type=int,
+        default=200,
+        help="Step size used when max-clip-frames triggers splitting.",
+    )
     return parser.parse_args()
 
 
@@ -121,6 +133,8 @@ def main() -> None:
                         args.face_joints_names,
                         str(out_dir),
                         str(tpos),
+                        max_clip_frames=args.max_clip_frames,
+                        clip_step_frames=args.clip_step_frames,
                     )
                     record["status"] = "ok"
                 record["processed_motion_count"] = count_processed_motions(out_dir)

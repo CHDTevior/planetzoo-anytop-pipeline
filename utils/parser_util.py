@@ -270,6 +270,10 @@ def process_new_skeleton_args():
     group.add_argument("--tpos_bvh", default='', type=str,
                        help="A BVH file of the character's natural rest pose for meaningful rotation learning. \
                             If missing, the code selects a pose from the provided BVH files.")
+    group.add_argument("--max_clip_frames", default=240, type=int,
+                       help="Split BVHs longer than this many source frames. Set <=0 to disable splitting.")
+    group.add_argument("--clip_step_frames", default=200, type=int,
+                       help="Step size used when max_clip_frames triggers splitting.")
     args = parser.parse_args()
     return args
 

@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-objects", type=int, default=None)
     parser.add_argument("--max-actions", type=int, default=None)
     parser.add_argument("--only-manis-contains", default=None)
+    parser.add_argument(
+        "--target-text-root",
+        default=None,
+        help="Optional AniMo4D text directory. Passed to the Blender exporter to export only target-captioned actions.",
+    )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip-complete", action="store_true")
@@ -40,6 +45,36 @@ def find_objects(input_root: Path, requested: list[str] | None) -> list[str]:
     if requested:
         return requested
     return [p.name for p in sorted(input_root.iterdir()) if p.is_dir()]
+
+
+def expected_raw_stem_from_text_name(name: str) -> str | None:
+    if not name.endswith("_keypoints.json.txt"):
+        return None
+    base = name[: -len("_keypoints.json.txt")]
+    match = re.match(r"^(.+?)__(animation(?:not)?motionextracted[^.]+)\.([A-Za-z0-9]+)_(.+)$", base)
+    if not match:
+        return None
+    animal, anim_group, maniset, action = match.groups()
+    return f"{animal}__{anim_group}_{maniset}__{action}"
+
+
+def object_dir_name_from_raw_stem(raw_stem: str) -> str:
+    animal = raw_stem.split("__", 1)[0]
+    object_key = "_".join(part.capitalize() for part in animal.split("_"))
+    return f"{object_key}_ovl"
+
+
+def target_object_names(text_root: str | None) -> set[str] | None:
+    if not text_root:
+        return None
+    root = Path(text_root)
+    files = [root] if root.is_file() else sorted(root.glob("*.txt"))
+    objects: set[str] = set()
+    for path in files:
+        raw_stem = expected_raw_stem_from_text_name(path.name)
+        if raw_stem:
+            objects.add(object_dir_name_from_raw_stem(raw_stem))
+    return objects
 
 
 def raw_counts(object_out: Path) -> tuple[int, int]:
@@ -130,6 +165,8 @@ def export_one(
         cmd.extend(["--max-actions", str(args.max_actions)])
     if args.only_manis_contains:
         cmd.extend(["--only-manis-contains", args.only_manis_contains])
+    if args.target_text_root:
+        cmd.extend(["--target-text-root", args.target_text_root])
 
     with log_path.open("w", encoding="utf-8", errors="ignore") as log_f:
         result = subprocess.run(cmd, stdout=log_f, stderr=subprocess.STDOUT, text=True)
@@ -162,6 +199,17 @@ def main() -> None:
     exporter = Path(__file__).resolve().with_name("planetzoo_fulltopo_bvh_export.py")
 
     objects = find_objects(input_root, args.objects)
+    targets = target_object_names(args.target_text_root)
+    if targets is not None:
+        before = len(objects)
+        objects = [name for name in objects if safe_name(name) in targets or name in targets]
+        print(
+            json.dumps(
+                {"target_text_root": args.target_text_root, "objects_before_filter": before, "objects_after_filter": len(objects)},
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
     objects = objects[args.start_index :]
     if args.max_objects is not None:
         objects = objects[: args.max_objects]

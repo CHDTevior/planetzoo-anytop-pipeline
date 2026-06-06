@@ -36,7 +36,15 @@ which is given as input to AnyTop during infecrence. Please follow sampling inst
 """
 def main():
     args = process_new_skeleton_args()
-    process_skeleton(args.object_name, args.bvh_dir, args.face_joints_names, args.save_dir, args.tpos_bvh)
+    process_skeleton(
+        args.object_name,
+        args.bvh_dir,
+        args.face_joints_names,
+        args.save_dir,
+        args.tpos_bvh,
+        max_clip_frames=args.max_clip_frames,
+        clip_step_frames=args.clip_step_frames,
+    )
     
 if __name__ == '__main__':
         main()
