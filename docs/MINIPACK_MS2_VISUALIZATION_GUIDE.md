@@ -65,6 +65,11 @@ copying local F-curves. Do not replace it with direct one-to-one rot6d-to-bone
 assignment; AnyTop stores the rotation on child slots and Planet Zoo's `srb`
 export helper otherwise leads to the known doubled global rotation error.
 
+Each `mesh_preview.json` contains an `orientation` audit. It records the
+fixed AnyTop world convention, the game-rig object transform, and the current
+frame's hips-to-head world direction. The audit never applies a rotation: a
+large Z component is normal for an upright or bent pose.
+
 ## Combine Several Mesh Previews
 
 To inspect several completed previews side-by-side, append their final game

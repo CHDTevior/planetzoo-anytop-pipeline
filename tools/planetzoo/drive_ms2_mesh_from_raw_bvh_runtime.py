@@ -188,6 +188,7 @@ def main() -> None:
     bpy.context.scene.frame_set(start)
     map_pose(source, target, ordered)
     embed_driver_note(target, source)
+    orientation = helpers.orientation_diagnostics(target)
     for path in [args.output_blend, args.output_mp4, args.output_report]:
         path.parent.mkdir(parents=True, exist_ok=True)
     if args.debug_frame_dir:
@@ -224,6 +225,7 @@ def main() -> None:
         "debug_frame_dir": str(args.debug_frame_dir) if args.debug_frame_dir else None,
         "output_blend": str(args.output_blend),
         "output_mp4": str(args.output_mp4),
+        "orientation": orientation,
     }
     args.output_report.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))

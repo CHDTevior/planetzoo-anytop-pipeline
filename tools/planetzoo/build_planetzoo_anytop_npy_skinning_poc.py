@@ -673,6 +673,44 @@ def verify_not_removed(motion_path: Path, removal_list: Path | None) -> bool:
     return True
 
 
+def orientation_diagnostics(target: bpy.types.Object) -> dict:
+    """Describe, but never alter, the canonical world-space presentation."""
+    result = {
+        "canonical_dataset_convention": {
+            "animal_forward": "+X",
+            "animal_dorsal": "-Y",
+            "standing_plane": "XZ",
+            "default_preview_camera": "+X/-Y elevated; +X towards viewer, -Y screen-top",
+        },
+        "rig_object_transform": {
+            "location": [round(value, 8) for value in target.location],
+            "rotation_euler_degrees": [round(math.degrees(value), 6) for value in target.rotation_euler],
+            "scale": [round(value, 8) for value in target.scale],
+        },
+    }
+    hips = target.pose.bones.get("def_c_hips_joint")
+    head = target.pose.bones.get("def_c_head_joint")
+    if hips is None or head is None:
+        result["frame_pose_hips_to_head_world"] = None
+        return result
+    hips_world = target.matrix_world @ hips.matrix.translation
+    head_world = target.matrix_world @ head.matrix.translation
+    vector = head_world - hips_world
+    if vector.length < 1e-8:
+        result["frame_pose_hips_to_head_world"] = None
+        return result
+    direction = vector.normalized()
+    components = {"X": direction.x, "Y": direction.y, "Z": direction.z}
+    axis = max(components, key=lambda key: abs(components[key]))
+    result["frame_pose_hips_to_head_world"] = {
+        "vector": [round(value, 8) for value in vector],
+        "unit_vector": [round(value, 8) for value in direction],
+        "dominant_axis": f"{'+' if components[axis] >= 0 else '-'}{axis}",
+        "note": "This is a pose cue, not a corrective transform; an upright or bent action can have a large Z component.",
+    }
+    return result
+
+
 def main() -> None:
     args = parse_args()
     required = [
@@ -747,6 +785,7 @@ def main() -> None:
     bpy.context.scene.frame_set(start)
     map_rest_relative_pose(source, target, shared)
     embed_driver_note(target, source)
+    orientation = orientation_diagnostics(target)
 
     for path in [args.output_blend, args.output_mp4, args.output_report]:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -791,6 +830,7 @@ def main() -> None:
         "frames": [start, end],
         "lod0_meshes": [mesh.name for mesh in lod0_meshes],
         "debug_frame_dir": str(args.debug_frame_dir) if args.debug_frame_dir else None,
+        "orientation": orientation,
         "decoder": diagnostics,
     }
     args.output_report.write_text(json.dumps(report, indent=2), encoding="utf-8")
