@@ -63,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=72)
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--debug-frame-dir", type=Path, help="Optional directory for first/middle/last mesh validation frames.")
+    parser.add_argument(
+        "--show-world-axes",
+        action="store_true",
+        help="Render a labelled Blender world-axis triad (+X red, +Y green, +Z blue/up).",
+    )
     return parser.parse_args(argv)
 
 
@@ -416,6 +421,64 @@ def material(name: str, color: tuple[float, float, float, float], roughness: flo
     return value
 
 
+def add_preview_axis_triad(parent: bpy.types.Object, camera: bpy.types.Object, location: Vector, extent: float) -> None:
+    """Add a labelled Blender-world triad that follows root translation only."""
+    length = extent * 0.28
+    shaft_length = length * 0.74
+    shaft_radius = max(extent * 0.012, 0.006)
+    cone_radius = shaft_radius * 2.7
+    cone_length = length - shaft_length
+    labels = (("+X", Vector((1.0, 0.0, 0.0)), (0.9, 0.08, 0.06, 1.0)),
+              ("+Y", Vector((0.0, 1.0, 0.0)), (0.08, 0.85, 0.16, 1.0)),
+              ("+Z up", Vector((0.0, 0.0, 1.0)), (0.1, 0.38, 0.95, 1.0)))
+    origin_material = material("preview_axis_origin", (0.92, 0.92, 0.95, 1.0), 0.35)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=10, radius=shaft_radius * 1.7, location=location)
+    origin = bpy.context.object
+    origin.name = "preview_world_axes_origin"
+    origin.parent = parent
+    origin.location = location
+    origin.data.materials.append(origin_material)
+    for label, direction, color in labels:
+        axis_material = material(f"preview_axis_{label}", color, 0.3)
+        shaft_center = location + direction * (shaft_length * 0.5)
+        bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=shaft_radius, depth=shaft_length, location=shaft_center)
+        shaft = bpy.context.object
+        shaft.name = f"preview_world_axis_{label}_shaft"
+        shaft.parent = parent
+        shaft.location = shaft_center
+        shaft.rotation_euler = Vector((0.0, 0.0, 1.0)).rotation_difference(direction).to_euler()
+        shaft.data.materials.append(axis_material)
+        tip_center = location + direction * (shaft_length + cone_length * 0.5)
+        bpy.ops.mesh.primitive_cone_add(
+            vertices=16,
+            radius1=cone_radius,
+            radius2=0.0,
+            depth=cone_length,
+            location=tip_center,
+        )
+        tip = bpy.context.object
+        tip.name = f"preview_world_axis_{label}_tip"
+        tip.parent = parent
+        tip.location = tip_center
+        tip.rotation_euler = Vector((0.0, 0.0, 1.0)).rotation_difference(direction).to_euler()
+        tip.data.materials.append(axis_material)
+        bpy.ops.object.text_add(location=location + direction * (length + shaft_radius * 4.0))
+        text = bpy.context.object
+        text.name = f"preview_world_axis_{label}_label"
+        text.parent = parent
+        text.location = location + direction * (length + shaft_radius * 4.0)
+        text.data.body = label
+        text.data.align_x = "CENTER"
+        text.data.align_y = "CENTER"
+        text.data.size = length * 0.17
+        text.data.extrude = shaft_radius * 0.22
+        text.data.materials.append(axis_material)
+        face_camera = text.constraints.new(type="TRACK_TO")
+        face_camera.target = camera
+        face_camera.track_axis = "TRACK_Z"
+        face_camera.up_axis = "UP_Y"
+
+
 def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start: int, end: int, args: argparse.Namespace) -> None:
     scene = bpy.context.scene
     scene.frame_start = start
@@ -480,28 +543,46 @@ def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start
     fill.data.size = extent
     look_at(fill, center)
 
-    # Planet Zoo and AnyTop poses are Y-up. Use an XZ ground plane so it
-    # cannot slice through the character as Blender's default XY plane would.
+    # The tensor is Y-up, but Blender's BVH importer maps it into a Z-up scene.
+    # Use the corresponding XY preview floor for interactive inspection.
     bpy.ops.mesh.primitive_plane_add(
         size=extent * 8.0,
-        location=root_position + Vector((0.0, -extent * 0.38, 0.0)),
-        rotation=(math.pi / 2.0, 0.0, 0.0),
+        location=root_position + Vector((0.0, 0.0, -extent * 0.38)),
     )
     ground = bpy.context.object
     ground.name = "preview_ground"
     ground.parent = anchor
-    ground.location = Vector((0.0, -extent * 0.38, 0.0))
+    ground.location = Vector((0.0, 0.0, -extent * 0.38))
     ground.data.materials.append(material("preview_ground", (0.02, 0.026, 0.038, 1.0), 0.95))
     bpy.ops.object.camera_add(location=root_position)
     camera = bpy.context.object
     camera.parent = anchor
-    camera.location = focus_offset + Vector((extent * 1.45, extent * 1.75, -extent * 1.70))
-    camera.data.lens = 58
+    # The raw BVH is imported into Blender's Z-up display space.  Keep the
+    # camera about 51 degrees above its XY ground plane to see the animal's
+    # dorsal side while retaining enough perspective to read all three axes.
+    camera.location = focus_offset + Vector((extent * 1.25, extent * 1.50, extent * 2.40))
+    camera.data.lens = 65
     track = camera.constraints.new(type="TRACK_TO")
     track.target = focus
     track.track_axis = "TRACK_NEGATIVE_Z"
     track.up_axis = "UP_Y"
     scene.camera = camera
+    if args.show_world_axes:
+        # Place the triad in the lower-left screen quadrant. Its parent only
+        # copies root translation, so RGB arrows retain Blender world
+        # orientation while the animal moves through the frame.
+        bpy.context.view_layer.update()
+        camera_rotation = camera.matrix_world.to_quaternion()
+        screen_right = camera_rotation @ Vector((1.0, 0.0, 0.0))
+        screen_up = camera_rotation @ Vector((0.0, 1.0, 0.0))
+        axis_world = focus.matrix_world.translation - screen_right * (extent * 0.53) - screen_up * (extent * 0.45)
+        axis_local = anchor.matrix_world.inverted() @ axis_world
+        add_preview_axis_triad(
+            anchor,
+            camera,
+            axis_local,
+            extent,
+        )
 
 
 def mute_constraints(rig: bpy.types.Object) -> int:

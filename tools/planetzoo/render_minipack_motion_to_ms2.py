@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=240)
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--debug-frame-dir", action="store_true")
+    parser.add_argument("--show-world-axes", action="store_true")
     return parser.parse_args()
 
 
@@ -107,6 +108,8 @@ def main() -> None:
     ]
     if args.debug_frame_dir:
         command.extend(["--debug-frame-dir", str(args.output_root / "frames")])
+    if args.show_world_axes:
+        command.append("--show-world-axes")
     subprocess.run(command, check=True)
 
 

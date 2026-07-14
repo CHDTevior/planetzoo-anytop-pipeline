@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debug-frame-dir", type=Path)
     parser.add_argument("--max-frames", type=int, default=72)
     parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--show-world-axes", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -122,9 +123,10 @@ def configure_static_preview(helpers, meshes: list[bpy.types.Object]) -> None:
     if camera:
         camera.parent = None
         camera.constraints.clear()
-        # Match the AnyTop NPY preview: a stable elevated three-quarter view
-        # centred on the visible mesh rather than the lower root joint.
-        camera.location = center + Vector((extent * 1.45, extent * 1.75, -extent * 1.70))
+        # Match the NPY preview: imported BVH is Z-up in Blender, so stay
+        # above the visible mesh rather than underneath its feet.
+        camera.location = center + Vector((extent * 1.25, extent * 1.50, extent * 2.40))
+        camera.data.lens = 65
         helpers.look_at(camera, center)
     lights = [obj for obj in bpy.context.scene.objects if obj.type == "LIGHT"]
     if lights:

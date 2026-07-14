@@ -33,12 +33,14 @@ python tools/planetzoo/render_minipack_motion_to_ms2.py `
   --motion-path H:\generated\PZ_Bengal_Tiger_Male_motion_13ch.npy `
   --skeleton-path H:\minipack\clips\PZ_Bengal_Tiger_Male\skeleton.json `
   --output-root H:\renders\PZ_Bengal_Tiger_Male `
-  --debug-frame-dir
+  --debug-frame-dir `
+  --show-world-axes
 ```
 
 The output root receives:
 
-- `mesh_preview.mp4`: elevated three-quarter mesh preview;
+- `mesh_preview.mp4`: elevated three-quarter mesh preview; add
+  `--show-world-axes` to draw Blender display axes (+X red, +Y green, +Z blue/up);
 - `mesh_preview.blend`: inspectable Blender scene at frame one;
 - `decoded_raw.bvh`: reconstructed BVH motion;
 - `expanded_full_motion.npy`: the temporary full-topology AnyTop tensor;
