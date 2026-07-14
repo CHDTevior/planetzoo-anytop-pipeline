@@ -500,7 +500,16 @@ def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start
     scene.render.filepath = str(args.output_mp4)
     if scene.world is None:
         scene.world = bpy.data.worlds.new("skinning_preview_world")
-    scene.world.color = (0.035, 0.04, 0.055)
+    scene.world.use_nodes = True
+    nodes = scene.world.node_tree.nodes
+    links = scene.world.node_tree.links
+    background = nodes.get("Background")
+    if background is None:
+        background = nodes.new(type="ShaderNodeBackground")
+        output = nodes.get("World Output") or nodes.new(type="ShaderNodeOutputWorld")
+        links.new(background.outputs["Background"], output.inputs["Surface"])
+    background.inputs["Color"].default_value = (0.035, 0.045, 0.065, 1.0)
+    background.inputs["Strength"].default_value = 0.25
     shade = material("skinning_validation_material", (0.22, 0.07, 0.025, 1.0), 0.68)
     for mesh in meshes:
         mesh.data.materials.clear()
@@ -535,18 +544,21 @@ def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start
     bpy.ops.object.light_add(type="AREA", location=root_position)
     key = bpy.context.object
     key.parent = anchor
-    key.location = Vector((extent, extent * 1.35, -extent * 0.8))
-    key.data.energy = 700
+    key.location = focus_offset + Vector((extent * 1.8, -extent * 2.4, extent * 1.1))
+    # Area-light distance grows with the mesh extent, so scale power by its
+    # square to give large and small species comparable illumination.
+    light_scale = extent * extent
+    key.data.energy = 250 * light_scale
     key.data.shape = "DISK"
-    key.data.size = extent * 1.4
-    look_at(key, center)
+    key.data.size = extent * 1.7
+    look_at(key, focus_offset)
     bpy.ops.object.light_add(type="AREA", location=root_position)
     fill = bpy.context.object
     fill.parent = anchor
-    fill.location = Vector((-extent, extent * 0.65, extent * 0.9))
-    fill.data.energy = 280
-    fill.data.size = extent
-    look_at(fill, center)
+    fill.location = focus_offset + Vector((-extent * 1.3, -extent * 0.6, -extent * 1.4))
+    fill.data.energy = 120 * light_scale
+    fill.data.size = extent * 1.4
+    look_at(fill, focus_offset)
 
     # This presentation convention has the animal standing on the XZ plane;
     # its anatomical dorsal direction is -Y, so the preview floor is XZ.
@@ -563,11 +575,11 @@ def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start
     bpy.ops.object.camera_add(location=root_position)
     camera = bpy.context.object
     camera.parent = anchor
-    # The requested canonical view is from -Y towards +Y: animals stand on
-    # XZ, face +X, and have their anatomical top along -Y.
-    camera.location = focus_offset + Vector((0.0, -extent * 3.25, 0.0))
+    # Camera sits on the +X/-Y side: +X points out toward the viewer, while
+    # the projection of -Y stays at the top of this elevated three-quarter view.
+    camera.location = focus_offset + Vector((extent * 3.4, -extent * 2.5, extent * 0.7))
     camera.data.lens = 70
-    look_at_camera(camera, focus_offset, Vector((0.0, 0.0, 1.0)))
+    look_at_camera(camera, focus_offset, Vector((0.0, -1.0, 0.0)))
     scene.camera = camera
     if args.show_world_axes:
         # Place the triad in the lower-left screen quadrant. Its parent only

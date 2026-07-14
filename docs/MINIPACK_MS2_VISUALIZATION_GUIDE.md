@@ -41,7 +41,8 @@ The output root receives:
 
 - `mesh_preview.mp4`: elevated three-quarter mesh preview; add
   `--show-world-axes` to draw scene axes (+X red, +Y green, +Z blue). The
-  default camera is at -Y looking towards +Y, with the animal standing on XZ;
+  default camera is elevated on the +X/-Y side: +X comes out toward the
+  viewer, -Y projects toward screen-top, and the animal stands on XZ;
 - `mesh_preview.blend`: inspectable Blender scene at frame one;
 - `decoded_raw.bvh`: reconstructed BVH motion;
 - `expanded_full_motion.npy`: the temporary full-topology AnyTop tensor;
@@ -63,3 +64,22 @@ The output scene uses a procedural rest-relative pose bridge instead of
 copying local F-curves. Do not replace it with direct one-to-one rot6d-to-bone
 assignment; AnyTop stores the rotation on child slots and Planet Zoo's `srb`
 export helper otherwise leads to the known doubled global rotation error.
+
+## Combine Several Mesh Previews
+
+To inspect several completed previews side-by-side, append their final game
+deform rigs and L0 meshes into a clean Blender file. This keeps the individual
+source BVHs, cameras, debug objects, and physics helpers out of the combined
+scene while retaining the saved mesh pose.
+
+```powershell
+H:\blender4_5\blender.exe -b --python tools\planetzoo\assemble_mesh_preview_scene.py -- `
+  --source Tiger H:\renders\PZ_Bengal_Tiger_Male\mesh_preview.blend `
+  --source SeaLion H:\renders\PZ_California_Sea_Lion_Male\mesh_preview.blend `
+  --output-blend H:\renders\combined_animals_source.blend `
+  --output-preview H:\renders\combined_animals_overview.png
+```
+
+The result has one named collection per source animal, an inspection floor,
+and the same +X-out / -Y-screen-up viewing convention as the individual
+previews.

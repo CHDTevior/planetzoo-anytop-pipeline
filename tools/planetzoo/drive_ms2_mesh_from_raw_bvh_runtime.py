@@ -123,11 +123,11 @@ def configure_static_preview(helpers, meshes: list[bpy.types.Object]) -> None:
     if camera:
         camera.parent = None
         camera.constraints.clear()
-        # Match the canonical preview: camera sits on -Y and looks towards
-        # +Y while animals stand on the XZ plane.
-        camera.location = center + Vector((0.0, -extent * 3.25, 0.0))
+        # Match the canonical preview: +X comes out of the screen from a
+        # +X/-Y elevated view, while -Y projects towards screen-top.
+        camera.location = center + Vector((extent * 3.4, -extent * 2.5, extent * 0.7))
         camera.data.lens = 70
-        helpers.look_at_camera(camera, center, Vector((0.0, 0.0, 1.0)))
+        helpers.look_at_camera(camera, center, Vector((0.0, -1.0, 0.0)))
     lights = [obj for obj in bpy.context.scene.objects if obj.type == "LIGHT"]
     if lights:
         lights[0].parent = None
