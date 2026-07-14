@@ -40,7 +40,8 @@ python tools/planetzoo/render_minipack_motion_to_ms2.py `
 The output root receives:
 
 - `mesh_preview.mp4`: elevated three-quarter mesh preview; add
-  `--show-world-axes` to draw Blender display axes (+X red, +Y green, +Z blue/up);
+  `--show-world-axes` to draw scene axes (+X red, +Y green, +Z blue). The
+  default camera is at -Y looking towards +Y, with the animal standing on XZ;
 - `mesh_preview.blend`: inspectable Blender scene at frame one;
 - `decoded_raw.bvh`: reconstructed BVH motion;
 - `expanded_full_motion.npy`: the temporary full-topology AnyTop tensor;

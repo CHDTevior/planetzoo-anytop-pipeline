@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-world-axes",
         action="store_true",
-        help="Render a labelled Blender world-axis triad (+X red, +Y green, +Z blue/up).",
+        help="Render a labelled scene-axis triad (+X red, +Y green, +Z blue).",
     )
     return parser.parse_args(argv)
 
@@ -422,7 +422,7 @@ def material(name: str, color: tuple[float, float, float, float], roughness: flo
 
 
 def add_preview_axis_triad(parent: bpy.types.Object, camera: bpy.types.Object, location: Vector, extent: float) -> None:
-    """Add a labelled Blender-world triad that follows root translation only."""
+    """Add a labelled scene-world triad that follows root translation only."""
     length = extent * 0.28
     shaft_length = length * 0.74
     shaft_radius = max(extent * 0.012, 0.006)
@@ -430,7 +430,7 @@ def add_preview_axis_triad(parent: bpy.types.Object, camera: bpy.types.Object, l
     cone_length = length - shaft_length
     labels = (("+X", Vector((1.0, 0.0, 0.0)), (0.9, 0.08, 0.06, 1.0)),
               ("+Y", Vector((0.0, 1.0, 0.0)), (0.08, 0.85, 0.16, 1.0)),
-              ("+Z up", Vector((0.0, 0.0, 1.0)), (0.1, 0.38, 0.95, 1.0)))
+              ("+Z", Vector((0.0, 0.0, 1.0)), (0.1, 0.38, 0.95, 1.0)))
     origin_material = material("preview_axis_origin", (0.92, 0.92, 0.95, 1.0), 0.35)
     bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=10, radius=shaft_radius * 1.7, location=location)
     origin = bpy.context.object
@@ -473,10 +473,15 @@ def add_preview_axis_triad(parent: bpy.types.Object, camera: bpy.types.Object, l
         text.data.size = length * 0.17
         text.data.extrude = shaft_radius * 0.22
         text.data.materials.append(axis_material)
-        face_camera = text.constraints.new(type="TRACK_TO")
-        face_camera.target = camera
-        face_camera.track_axis = "TRACK_Z"
-        face_camera.up_axis = "UP_Y"
+        text.rotation_euler = camera.rotation_euler
+
+
+def look_at_camera(camera: bpy.types.Object, target: Vector, world_up: Vector) -> None:
+    """Orient a camera without a Track To singularity when looking along Y."""
+    forward = (target - camera.location).normalized()
+    right = forward.cross(world_up).normalized()
+    up = right.cross(forward).normalized()
+    camera.rotation_euler = Matrix((right, up, -forward)).transposed().to_euler()
 
 
 def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start: int, end: int, args: argparse.Namespace) -> None:
@@ -543,33 +548,30 @@ def make_preview(target: bpy.types.Object, meshes: list[bpy.types.Object], start
     fill.data.size = extent
     look_at(fill, center)
 
-    # The tensor is Y-up, but Blender's BVH importer maps it into a Z-up scene.
-    # Use the corresponding XY preview floor for interactive inspection.
+    # This presentation convention has the animal standing on the XZ plane;
+    # its anatomical dorsal direction is -Y, so the preview floor is XZ.
     bpy.ops.mesh.primitive_plane_add(
         size=extent * 8.0,
-        location=root_position + Vector((0.0, 0.0, -extent * 0.38)),
+        location=root_position + Vector((0.0, extent * 0.38, 0.0)),
+        rotation=(math.pi / 2.0, 0.0, 0.0),
     )
     ground = bpy.context.object
     ground.name = "preview_ground"
     ground.parent = anchor
-    ground.location = Vector((0.0, 0.0, -extent * 0.38))
+    ground.location = Vector((0.0, extent * 0.38, 0.0))
     ground.data.materials.append(material("preview_ground", (0.02, 0.026, 0.038, 1.0), 0.95))
     bpy.ops.object.camera_add(location=root_position)
     camera = bpy.context.object
     camera.parent = anchor
-    # The raw BVH is imported into Blender's Z-up display space.  Keep the
-    # camera about 51 degrees above its XY ground plane to see the animal's
-    # dorsal side while retaining enough perspective to read all three axes.
-    camera.location = focus_offset + Vector((extent * 1.25, extent * 1.50, extent * 2.40))
-    camera.data.lens = 65
-    track = camera.constraints.new(type="TRACK_TO")
-    track.target = focus
-    track.track_axis = "TRACK_NEGATIVE_Z"
-    track.up_axis = "UP_Y"
+    # The requested canonical view is from -Y towards +Y: animals stand on
+    # XZ, face +X, and have their anatomical top along -Y.
+    camera.location = focus_offset + Vector((0.0, -extent * 3.25, 0.0))
+    camera.data.lens = 70
+    look_at_camera(camera, focus_offset, Vector((0.0, 0.0, 1.0)))
     scene.camera = camera
     if args.show_world_axes:
         # Place the triad in the lower-left screen quadrant. Its parent only
-        # copies root translation, so RGB arrows retain Blender world
+        # copies root translation, so RGB arrows retain scene-world
         # orientation while the animal moves through the frame.
         bpy.context.view_layer.update()
         camera_rotation = camera.matrix_world.to_quaternion()

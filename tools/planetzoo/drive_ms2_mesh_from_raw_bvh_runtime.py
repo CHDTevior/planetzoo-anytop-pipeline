@@ -123,11 +123,11 @@ def configure_static_preview(helpers, meshes: list[bpy.types.Object]) -> None:
     if camera:
         camera.parent = None
         camera.constraints.clear()
-        # Match the NPY preview: imported BVH is Z-up in Blender, so stay
-        # above the visible mesh rather than underneath its feet.
-        camera.location = center + Vector((extent * 1.25, extent * 1.50, extent * 2.40))
-        camera.data.lens = 65
-        helpers.look_at(camera, center)
+        # Match the canonical preview: camera sits on -Y and looks towards
+        # +Y while animals stand on the XZ plane.
+        camera.location = center + Vector((0.0, -extent * 3.25, 0.0))
+        camera.data.lens = 70
+        helpers.look_at_camera(camera, center, Vector((0.0, 0.0, 1.0)))
     lights = [obj for obj in bpy.context.scene.objects if obj.type == "LIGHT"]
     if lights:
         lights[0].parent = None
