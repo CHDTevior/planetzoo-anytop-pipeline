@@ -43,3 +43,21 @@ Read `official_position_probe.json` and
 `animo4d_notebook_equivalent_report.json`. A persistent maximum transition in
 both reports means the event is present before AnyTop conversion and survives
 AniMo4D's public position-to-feature path.
+
+## Pre-BVH Jitter Policy
+
+Append `--disable-ik` to the first command for a diagnostic A/B export. It
+keeps the decoded MANIS bone transforms but disables only the Blender IK
+constraints created by Cobra Tools. This is not part of the historical
+AniMo4D route. `--mute-all-constraints` is strictly diagnostic: it establishes
+whether a discontinuity is already present in the decoded F-curves.
+
+The full-topology raw-BVH exporter also accepts `--disable-ik` and records
+`ik_disabled_during_export` in each motion manifest entry. Export IK-on and
+IK-off candidates to separate roots, then retain only a temporally clean,
+visually validated candidate.
+
+If an outlier survives both modes, it is already present in Cobra's decoded
+compressed-MANIS F-curves. Do not use interpolation as a substitute for source
+motion. Mark the clip decoder-risk, retain the asset paths and importer log,
+and exclude it until the decoder itself can be corrected.

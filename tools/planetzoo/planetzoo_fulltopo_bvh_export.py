@@ -36,6 +36,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-actions", type=int, default=None)
     parser.add_argument("--only-manis-contains", default=None)
     parser.add_argument(
+        "--disable-ik",
+        action="store_true",
+        help=(
+            "Disable Cobra's Blender IK constraints while evaluating MANIS "
+            "actions. Use this jitter-free export route instead of the legacy "
+            "IK-enabled evaluation when validated for the target clips."
+        ),
+    )
+    parser.add_argument(
         "--target-text-root",
         default=None,
         help="Optional AniMo4D text directory. When set, export only actions whose raw BVH stem is present there.",
@@ -268,6 +277,7 @@ def process_object_dir(
     max_actions,
     only_manis_contains,
     target_stems_by_object,
+    disable_ik,
 ):
     ms2_files = sorted(object_dir.glob("*.ms2"))
     manis_files = sorted(object_dir.glob("*.manis"))
@@ -324,7 +334,11 @@ def process_object_dir(
                 f.write(json.dumps(rest_entry, ensure_ascii=False) + "\n")
 
         try:
-            import_manis.load(reporter=reporter, filepath=str(manis_path))
+            import_manis.load(
+                reporter=reporter,
+                filepath=str(manis_path),
+                disable_ik=disable_ik,
+            )
         except Exception:
             print(f"MANIS_IMPORT_FAILED {object_dir.name} :: {manis_path.name}")
             traceback.print_exc()
@@ -353,6 +367,7 @@ def process_object_dir(
                 "action_name": action.name,
                 "action_short": short_action,
                 "source_motion_key": f"{animal_key}@{short_action}",
+                "ik_disabled_during_export": bool(disable_ik),
                 "raw_bvh": str((object_out / "raw_bvhs" / bvh_name).resolve()),
                 "raw_bvh_stem": raw_bvh_stem,
             }
@@ -409,6 +424,7 @@ def main() -> None:
                 args.max_actions,
                 args.only_manis_contains,
                 target_stems_by_object,
+                args.disable_ik,
             )
             summary[object_dir.name] = count
             if manifest_path.exists():

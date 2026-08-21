@@ -75,6 +75,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manis-path", required=True, type=Path)
     parser.add_argument("--action", required=True, help="Exact Blender action name, e.g. caracal_male@walkbase.")
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--disable-ik",
+        action="store_true",
+        help=(
+            "Disable the Blender IK constraints created by Cobra Tools before "
+            "sampling. This is a diagnostic A/B mode; omit it to reproduce "
+            "AniMo4D's original IK-enabled exporter."
+        ),
+    )
+    parser.add_argument(
+        "--mute-all-constraints",
+        action="store_true",
+        help=(
+            "Mute every imported Blender pose-bone constraint before sampling. "
+            "Diagnostic only: this isolates decompressed MANIS F-curves from "
+            "all Blender constraint evaluation."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -105,6 +123,15 @@ def find_armature() -> bpy.types.Object:
     if armature is None:
         raise RuntimeError("MS2 import produced no armature.")
     return armature
+
+
+def mute_all_constraints(armature: bpy.types.Object) -> int:
+    count = 0
+    for pose_bone in armature.pose.bones:
+        for constraint in pose_bone.constraints:
+            constraint.mute = True
+            count += 1
+    return count
 
 
 def collect_animo4d_positions(armature: bpy.types.Object, action: bpy.types.Action) -> tuple[dict[str, dict[str, list[float]]], np.ndarray, list[int]]:
@@ -167,8 +194,10 @@ def main() -> None:
 
     import_ms2.load(reporter=Reporter(), filepath=str(args.ms2_path), merge_vertices=False)
     armature = find_armature()
-    # Exact official default: IK is NOT disabled during position extraction.
-    import_manis.load(reporter=Reporter(), filepath=str(args.manis_path), disable_ik=False)
+    # AniMo4D's public export uses the default (IK enabled). The optional
+    # switch isolates Blender/Cobra IK evaluation without changing the asset.
+    import_manis.load(reporter=Reporter(), filepath=str(args.manis_path), disable_ik=args.disable_ik)
+    muted_constraint_count = mute_all_constraints(armature) if args.mute_all_constraints else 0
     action = bpy.data.actions.get(args.action)
     if action is None:
         candidates = sorted(item.name for item in bpy.data.actions if item.id_root == "OBJECT")
@@ -185,7 +214,9 @@ def main() -> None:
         "ms2_path": str(args.ms2_path),
         "manis_path": str(args.manis_path),
         "action": action.name,
-        "ik_disabled": False,
+        "ik_disabled": bool(args.disable_ik),
+        "all_constraints_muted": bool(args.mute_all_constraints),
+        "muted_constraint_count": muted_constraint_count,
         "joint_order": ANIMO4D_JOINTS,
         "json_path": str(raw_path),
         "npy_path": str(npy_path),
