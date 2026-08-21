@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--blender", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--owner", action="append", default=[], help="Optional owner name, repeatable.")
+    parser.add_argument(
+        "--target-action",
+        action="append",
+        default=[],
+        help="Optional exact motion-extracted action name, repeatable.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum clips to reconstruct.")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -46,7 +52,7 @@ def find_ms2(input_root: Path, owner: str) -> Path:
     raise FileNotFoundError(f"could not resolve exactly one MS2 for {owner}: {candidates}")
 
 
-def load_pairs(path: Path, owners: set[str]) -> list[dict]:
+def load_pairs(path: Path, owners: set[str], target_actions: set[str]) -> list[dict]:
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -55,6 +61,8 @@ def load_pairs(path: Path, owners: set[str]) -> list[dict]:
         if owners and row["owner"] not in owners:
             continue
         target = row["target"]
+        if target_actions and target["action_name"] not in target_actions:
+            continue
         donor = row["donor"]
         if not (
             target["source_kind"] == "motion_extracted"
@@ -76,7 +84,7 @@ def output_stem(row: dict) -> str:
 def main() -> None:
     args = parse_args()
     runner = Path(__file__).with_name("evaluate_motionextracted_onspot_hybrid.py")
-    pairs = load_pairs(args.pairs_manifest, set(args.owner))
+    pairs = load_pairs(args.pairs_manifest, set(args.owner), set(args.target_action))
     if args.limit is not None:
         pairs = pairs[: args.limit]
 

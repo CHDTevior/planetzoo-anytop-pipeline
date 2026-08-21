@@ -114,11 +114,26 @@ def safe_clear_scene() -> None:
         bpy.data.textures,
         bpy.data.images,
         bpy.data.armatures,
-        bpy.data.actions,
     ]:
         for item in list(datablock):
             if not item.users:
                 datablock.remove(item)
+    # Cobra marks imported actions with a fake user and stashes them in NLA
+    # tracks.  Therefore a generic ``if not item.users`` cleanup leaves old
+    # actions alive between MANIS files, allowing them to be exported under a
+    # later file's name.  This Blender process is dedicated to one export, so
+    # explicitly unlink every action before importing the next MANIS asset.
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action, do_unlink=True)
+
+
+def declared_action_names(manis_path: Path) -> set[str]:
+    """Read the authoritative MANIS action names before Blender import."""
+    from generated.formats.manis import ManisFile
+
+    manis = ManisFile()
+    manis.load(str(manis_path))
+    return {info.name for info in manis.mani_infos}
 
 
 class Reporter:
@@ -334,6 +349,7 @@ def process_object_dir(
                 f.write(json.dumps(rest_entry, ensure_ascii=False) + "\n")
 
         try:
+            declared_names = declared_action_names(manis_path)
             import_manis.load(
                 reporter=reporter,
                 filepath=str(manis_path),
@@ -343,13 +359,21 @@ def process_object_dir(
             print(f"MANIS_IMPORT_FAILED {object_dir.name} :: {manis_path.name}")
             traceback.print_exc()
             continue
+        imported_actions = [
+            action
+            for action in bpy.data.actions
+            if action.id_root == "OBJECT" and action.name in declared_names
+        ]
+        imported_names = {action.name for action in imported_actions}
+        missing_names = declared_names - imported_names
+        if missing_names:
+            print(
+                f"DECLARED_ACTIONS_NOT_IMPORTED {object_dir.name} :: {manis_path.name} "
+                f"count={len(missing_names)}"
+            )
         action_count_for_manis = 0
-        for action in list(bpy.data.actions):
-            if action.id_root != "OBJECT":
-                continue
+        for action in imported_actions:
             safe_action_name = safe_name(action.name)
-            if ms2_stem[:-1] not in safe_action_name:
-                continue
             bvh_name = f"{safe_name(ms2_stem)}__{safe_name(manis_path.stem)}__{safe_action_name}.bvh"
             raw_bvh_stem = Path(bvh_name).stem
             if target_stems is not None and raw_bvh_stem.lower() not in target_stems:
@@ -367,6 +391,8 @@ def process_object_dir(
                 "action_name": action.name,
                 "action_short": short_action,
                 "source_motion_key": f"{animal_key}@{short_action}",
+                "source_action_verified": True,
+                "manis_declared_action_count": len(declared_names),
                 "ik_disabled_during_export": bool(disable_ik),
                 "raw_bvh": str((object_out / "raw_bvhs" / bvh_name).resolve()),
                 "raw_bvh_stem": raw_bvh_stem,
