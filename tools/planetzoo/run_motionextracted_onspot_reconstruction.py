@@ -8,6 +8,8 @@ recorded per clip and cannot contaminate another character's actions.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
+import hashlib
 import json
 import re
 import subprocess
@@ -30,6 +32,7 @@ def parse_args() -> argparse.Namespace:
         help="Optional exact motion-extracted action name, repeatable.",
     )
     parser.add_argument("--limit", type=int, default=None, help="Optional maximum clips to reconstruct.")
+    parser.add_argument("--workers", type=int, default=1, help="Independent Blender processes to run concurrently.")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -78,7 +81,73 @@ def load_pairs(path: Path, owners: set[str], target_actions: set[str]) -> list[d
 
 def output_stem(row: dict) -> str:
     target = row["target"]
-    return safe_name("__".join((row["owner"], target["category"], Path(target["source_path"]).stem, target["action_name"])))
+    stem = safe_name("__".join((row["owner"], target["category"], Path(target["source_path"]).stem, target["action_name"])))
+    # Blender's embedded Python may still observe MAX_PATH on Windows. Keep
+    # per-clip filenames short enough for deep output roots while retaining a
+    # deterministic suffix that prevents collisions between long action names.
+    if len(stem) > 96:
+        digest = hashlib.sha1(stem.encode("utf-8")).hexdigest()[:12]
+        stem = f"{stem[:83]}_{digest}"
+    return stem
+
+
+def reconstruct_one(index: int, total: int, row: dict, args: argparse.Namespace, runner: Path) -> dict:
+    started = time.time()
+    target = row["target"]
+    donor = row["donor"]
+    stem = output_stem(row)
+    owner_dir = args.output_root / safe_name(row["owner"])
+    bvh_path = owner_dir / "bvhs" / f"{stem}.bvh"
+    report_path = owner_dir / "reports" / f"{stem}.json"
+    positions_path = owner_dir / "positions" / f"{stem}.npz"
+    record = {
+        "index": index,
+        "total": total,
+        "owner": row["owner"],
+        "target_action": target["action_name"],
+        "donor_action": donor["action_name"],
+        "target_source_path": target["source_path"],
+        "donor_source_path": donor["source_path"],
+        "bvh": str(bvh_path),
+        "report": str(report_path),
+        "positions": str(positions_path),
+    }
+    try:
+        if args.skip_existing and bvh_path.is_file() and report_path.is_file() and positions_path.is_file():
+            record["status"] = "skipped_existing"
+        else:
+            ms2_path = find_ms2(args.input_root, row["owner"])
+            cmd = [
+                str(args.blender), "--background", "--python", str(runner), "--",
+                "--cobra-tools", str(args.cobra_tools),
+                "--ms2-path", str(ms2_path),
+                "--extracted-manis", str(args.input_root / Path(target["source_path"])),
+                "--extracted-action", target["action_name"],
+                "--onspot-manis", str(args.input_root / Path(donor["source_path"])),
+                "--onspot-action", donor["action_name"],
+                "--use-limb-branches",
+                "--output-position-npz", str(positions_path),
+                "--output-report", str(report_path),
+                "--output-bvh", str(bvh_path),
+            ]
+            record["command"] = cmd
+            if args.dry_run:
+                record["status"] = "dry_run"
+            else:
+                for output_path in (bvh_path, report_path, positions_path):
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path = owner_dir / "logs" / f"{stem}.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                result = subprocess.run(cmd, text=True, capture_output=True, check=False)
+                log_path.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8", errors="ignore")
+                record["log"] = str(log_path)
+                record["returncode"] = result.returncode
+                record["status"] = "ok" if result.returncode == 0 and bvh_path.is_file() and report_path.is_file() else "error"
+    except Exception as exc:
+        record["status"] = "error"
+        record["error"] = repr(exc)
+    record["seconds"] = round(time.time() - started, 3)
+    return record
 
 
 def main() -> None:
@@ -93,65 +162,17 @@ def main() -> None:
     summary_path = args.output_root / "reconstruction_summary.json"
     records = []
     with status_path.open("a", encoding="utf-8", newline="\n") as status_file:
-        for index, row in enumerate(pairs, start=1):
-            started = time.time()
-            target = row["target"]
-            donor = row["donor"]
-            stem = output_stem(row)
-            owner_dir = args.output_root / safe_name(row["owner"])
-            bvh_path = owner_dir / "bvhs" / f"{stem}.bvh"
-            report_path = owner_dir / "reports" / f"{stem}.json"
-            positions_path = owner_dir / "positions" / f"{stem}.npz"
-            record = {
-                "index": index,
-                "total": len(pairs),
-                "owner": row["owner"],
-                "target_action": target["action_name"],
-                "donor_action": donor["action_name"],
-                "target_source_path": target["source_path"],
-                "donor_source_path": donor["source_path"],
-                "bvh": str(bvh_path),
-                "report": str(report_path),
-                "positions": str(positions_path),
-            }
-            try:
-                if args.skip_existing and bvh_path.is_file() and report_path.is_file() and positions_path.is_file():
-                    record["status"] = "skipped_existing"
-                else:
-                    ms2_path = find_ms2(args.input_root, row["owner"])
-                    cmd = [
-                        str(args.blender), "--background", "--python", str(runner), "--",
-                        "--cobra-tools", str(args.cobra_tools),
-                        "--ms2-path", str(ms2_path),
-                        "--extracted-manis", str(args.input_root / Path(target["source_path"])),
-                        "--extracted-action", target["action_name"],
-                        "--onspot-manis", str(args.input_root / Path(donor["source_path"])),
-                        "--onspot-action", donor["action_name"],
-                        "--use-limb-branches",
-                        "--output-position-npz", str(positions_path),
-                        "--output-report", str(report_path),
-                        "--output-bvh", str(bvh_path),
-                    ]
-                    record["command"] = cmd
-                    if args.dry_run:
-                        record["status"] = "dry_run"
-                    else:
-                        owner_dir.mkdir(parents=True, exist_ok=True)
-                        log_path = owner_dir / "logs" / f"{stem}.log"
-                        log_path.parent.mkdir(parents=True, exist_ok=True)
-                        result = subprocess.run(cmd, text=True, capture_output=True, check=False)
-                        log_path.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8", errors="ignore")
-                        record["log"] = str(log_path)
-                        record["returncode"] = result.returncode
-                        record["status"] = "ok" if result.returncode == 0 and bvh_path.is_file() and report_path.is_file() else "error"
-            except Exception as exc:
-                record["status"] = "error"
-                record["error"] = repr(exc)
-            record["seconds"] = round(time.time() - started, 3)
-            status_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-            status_file.flush()
-            records.append(record)
-            print(json.dumps(record, ensure_ascii=False), flush=True)
+        with cf.ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
+            futures = [
+                executor.submit(reconstruct_one, index, len(pairs), row, args, runner)
+                for index, row in enumerate(pairs, start=1)
+            ]
+            for future in cf.as_completed(futures):
+                record = future.result()
+                status_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                status_file.flush()
+                records.append(record)
+                print(json.dumps(record, ensure_ascii=False), flush=True)
 
     summary = {
         "pairs_requested": len(pairs),

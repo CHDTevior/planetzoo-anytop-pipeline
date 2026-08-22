@@ -42,6 +42,11 @@ No candidate is inferred for missing or ambiguous donors. Those actions must
 remain outside this recovery branch until the unresolved MANIS dtype-38 limb
 track semantics are independently decoded.
 
+For those actions, use the **direct no-IK decode** mode instead of substituting
+an approximate donor. It imports exactly one MS2 and one MANIS file in an
+isolated Blender process, permanently disables importer IK, and exports the
+declared Action untouched. This is a diagnostic/export path, not a repair.
+
 ## Reconstruction
 
 1. Import the character MS2 plus the exact target and donor MANIS files with
@@ -105,6 +110,35 @@ every strict pair for an owner:
   --target-action 'grey_seal_female@walktodrinktroughturnr'
 ```
 
+Audit legacy QC labels without a strict on-spot pair, then produce a direct
+no-IK BVH for each correctly resolved MANIS Action:
+
+```powershell
+& $py "$repo\tools\planetzoo\build_legacy_qc_direct_targets.py" `
+  --audit 'H:\AniMo4D_work\AniMo4D_Anytop\decoder_trials\legacy_flagged_provenance_audit.json' `
+  --pairs-manifest 'H:\AniMo4D_work\motionextracted_onspot_pairs.jsonl' `
+  --input-root 'H:\AniMo4D_work\01_ovl_extracted' `
+  --output-jsonl 'H:\AniMo4D_work\legacy_qc_direct_targets.jsonl' `
+  --output-summary 'H:\AniMo4D_work\legacy_qc_direct_targets_summary.json'
+
+& $py "$repo\tools\planetzoo\run_direct_noik_reconstruction.py" `
+  --targets-manifest 'H:\AniMo4D_work\legacy_qc_direct_targets.jsonl' `
+  --input-root 'H:\AniMo4D_work\01_ovl_extracted' `
+  --cobra-tools 'H:\codex_project1\.codex-tmp\cobra-tools-latest-decoder-lab' `
+  --blender 'H:\blender4_5\blender.exe' `
+  --output-root 'H:\AniMo4D_work\legacy_qc_direct_noik' `
+  --workers 8
+
+& $py "$repo\tools\planetzoo\scan_reconstruction_bvhs.py" `
+  --reconstruction-status 'H:\AniMo4D_work\legacy_qc_direct_noik\reconstruction_status.jsonl' `
+  --output-dir 'H:\AniMo4D_work\legacy_qc_direct_noik\proximal_qc'
+```
+
+`stage_reconstructed_bvhs_for_anytop.py` and
+`render_reconstructed_anytop_qc.py` turn any selected QC set into paired
+AnyTop RIC-versus-Rot6D-FK GIFs. The generated `index.html` is the review
+surface; the red chain is the scanner's trigger bone and descendants.
+
 Audit an existing flagged visual-QC set against the original MANIS declarations
 before deciding whether it is an exporter collision or a real decode issue:
 
@@ -146,10 +180,32 @@ the provenance guard applies to every fresh raw-BVH export, while paired
 recovery intentionally covers only the 28 actions for which the asset contract
 is satisfied.
 
+### Full 87-action Follow-up
+
+The complete 87-action follow-up used source-declared MANIS provenance and
+`disable_ik=True` throughout:
+
+| Branch | Actions | Clean | Borderline | Candidate | Severe |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Strict on-spot local-rotation recovery | 28 | 20 | 7 | 1 | 0 |
+| Direct no-IK decode (no strict donor) | 59 | 8 | 44 | 5 | 2 |
+| Total | 87 | 28 | 51 | 6 | 2 |
+
+The direct branch's 51 flagged actions were all converted to AnyTop and
+rendered. Every paired RIC-versus-Rot6D-FK check remained self-consistent: the
+largest position error was `7.0e-9`. Thus these flags are present in the
+source offline Cobra/MANIS pose decode, rather than introduced by the AnyTop
+13-channel representation. The 2 severe plus 5 candidate clips are the
+high-confidence manual-review set; `borderline` is deliberately retained as a
+separate, less certain threshold bucket.
+
 ## Scope
 
 The full local audit found `26,064` strict dtype-38/dtype-36 pairs among
 `79,417` parsed actions (`25,993` locomotion, `7` behaviour, `64` fighting).
 It also found `12,116` dtype-38 actions without a clean donor and `2,113`
 with ambiguous donors. The latter two groups are deliberately not exported by
-this method.
+the paired-recovery method. A full data rebuild should instead start from the
+provenance-guarded raw-BVH export, use paired recovery only where the strict
+contract exists, direct no-IK decode otherwise, and run the same QC before
+admitting a motion to the final AnyTop layout.

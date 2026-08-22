@@ -32,8 +32,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ms2-path", required=True, type=Path)
     parser.add_argument("--extracted-manis", required=True, type=Path)
     parser.add_argument("--extracted-action", required=True)
-    parser.add_argument("--onspot-manis", required=True, type=Path)
-    parser.add_argument("--onspot-action", required=True)
+    parser.add_argument("--onspot-manis", type=Path)
+    parser.add_argument("--onspot-action")
     parser.add_argument("--output-position-npz", required=True, type=Path)
     parser.add_argument("--output-report", required=True, type=Path)
     parser.add_argument("--output-bvh", type=Path, help="Optional standard BVH export of the reconstructed action.")
@@ -191,6 +191,8 @@ def quat_step_degrees(previous: np.ndarray, current: np.ndarray) -> float:
 
 def main() -> None:
     args = parse_args()
+    if bool(args.onspot_manis) != bool(args.onspot_action):
+        raise ValueError("--onspot-manis and --onspot-action must be supplied together")
     clear_scene()
     register_cobra(args.cobra_tools)
     from plugin import import_manis, import_ms2  # pylint: disable=import-outside-toplevel
@@ -198,18 +200,14 @@ def main() -> None:
     import_ms2.load(reporter=Reporter(), filepath=str(args.ms2_path), merge_vertices=False)
     rig = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
     import_manis.load(reporter=Reporter(), filepath=str(args.extracted_manis), disable_ik=True)
-    import_manis.load(reporter=Reporter(), filepath=str(args.onspot_manis), disable_ik=True)
     extracted = bpy.data.actions[args.extracted_action]
-    onspot = bpy.data.actions[args.onspot_action]
-    if extracted.frame_range != onspot.frame_range:
-        raise ValueError(f"Frame ranges differ: extracted={tuple(extracted.frame_range)}, onspot={tuple(onspot.frame_range)}")
-
     hybrid = extracted.copy()
-    hybrid.name = f"{args.extracted_action}__onspot_local_rotations"
+    hybrid.name = f"{args.extracted_action}__offline_noik"
     patterns = [re.compile(pattern) for pattern in args.rotation_bone_pattern]
     if args.use_limb_branches and patterns:
         raise ValueError("Use either --use-limb-branches or --rotation-bone-pattern, not both")
-    selected_limb_bones = limb_branch_bones(args.extracted_manis, args.extracted_action, rig) if args.use_limb_branches else set()
+    selected_limb_bones: set[str] = set()
+    rotation_sources = []
 
     def should_copy(curve) -> bool:
         bone_name = curve_bone_name(curve)
@@ -219,12 +217,19 @@ def main() -> None:
             return bone_name in selected_limb_bones
         return not patterns or any(pattern.search(bone_name) for pattern in patterns)
 
-    for curve in tuple(hybrid.fcurves):
-        if should_copy(curve):
-            hybrid.fcurves.remove(curve)
-    rotation_sources = [curve for curve in onspot.fcurves if should_copy(curve)]
-    for curve in rotation_sources:
-        copy_curve(curve, hybrid)
+    if args.onspot_manis is not None:
+        import_manis.load(reporter=Reporter(), filepath=str(args.onspot_manis), disable_ik=True)
+        onspot = bpy.data.actions[args.onspot_action]
+        if extracted.frame_range != onspot.frame_range:
+            raise ValueError(f"Frame ranges differ: extracted={tuple(extracted.frame_range)}, onspot={tuple(onspot.frame_range)}")
+        hybrid.name = f"{args.extracted_action}__onspot_local_rotations"
+        selected_limb_bones = limb_branch_bones(args.extracted_manis, args.extracted_action, rig) if args.use_limb_branches else set()
+        for curve in tuple(hybrid.fcurves):
+            if should_copy(curve):
+                hybrid.fcurves.remove(curve)
+        rotation_sources = [curve for curve in onspot.fcurves if should_copy(curve)]
+        for curve in rotation_sources:
+            copy_curve(curve, hybrid)
 
     rig.animation_data_create()
     rig.animation_data.action = hybrid
@@ -253,10 +258,14 @@ def main() -> None:
     args.output_position_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output_position_npz, names=np.asarray(names), parents=parents, frames=np.asarray(frames, dtype=np.int32), positions=positions)
     report = {
-        "purpose": "strict paired offline reconstruction; no smoothing, interpolation, or IK",
+        "purpose": (
+            "strict paired offline reconstruction; no smoothing, interpolation, or IK"
+            if args.onspot_manis is not None
+            else "direct offline Cobra decode; no smoothing, interpolation, or IK"
+        ),
         "extracted_action": args.extracted_action,
         "onspot_action": args.onspot_action,
-        "rotation_curve_source": "onspot",
+        "rotation_curve_source": "onspot" if args.onspot_manis is not None else "motionextracted",
         "translation_curve_source": "motionextracted",
         "frames": [frames[0], frames[-1]],
         "max_local_step_degrees": float(steps[worst_frame, worst_bone]),
