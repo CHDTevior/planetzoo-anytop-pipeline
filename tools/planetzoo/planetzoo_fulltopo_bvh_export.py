@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--objects", nargs="*", default=None)
     parser.add_argument("--max-objects", type=int, default=None)
     parser.add_argument("--max-actions", type=int, default=None)
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=20,
+        help="BVH frame rate. The KTJD-17 corpus uses 30 FPS.",
+    )
     parser.add_argument("--only-manis-contains", default=None)
     parser.add_argument(
         "--disable-ik",
@@ -43,6 +49,11 @@ def parse_args() -> argparse.Namespace:
             "actions. Use this jitter-free export route instead of the legacy "
             "IK-enabled evaluation when validated for the target clips."
         ),
+    )
+    parser.add_argument(
+        "--full-ms2",
+        action="store_true",
+        help="Import meshes and materials too. BVH export defaults to the safer armature-only route.",
     )
     parser.add_argument(
         "--target-text-root",
@@ -127,6 +138,44 @@ def safe_clear_scene() -> None:
         bpy.data.actions.remove(action, do_unlink=True)
 
 
+def clear_imported_actions(armature) -> None:
+    """Clear MANIS animation state without reimporting the MS2 rig.
+
+    Repeated native MS2 imports are substantially less stable than repeated
+    MANIS imports for some Planet Zoo assets.  The rig can safely stay alive
+    for one object while every action and NLA track is removed before the next
+    MANIS file is imported.
+    """
+    if armature.animation_data is not None:
+        armature.animation_data.action = None
+        for track in list(armature.animation_data.nla_tracks):
+            armature.animation_data.nla_tracks.remove(track)
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action, do_unlink=True)
+
+
+def import_ms2_armature_only(reporter, filepath: str) -> None:
+    """Build Cobra's armature exactly as the MS2 importer does, without meshes.
+
+    MANIS decoding and BVH export only consume bind bones.  Avoiding LOD meshes,
+    materials, and hair removes a large unrelated native-code failure surface.
+    """
+    from generated.formats.ms2 import Ms2File
+    from plugin.modules_import.armature import get_bone_names, import_armature
+    from plugin.utils.object import create_collection, create_scene
+
+    ms2_path = Path(filepath)
+    ms2 = Ms2File()
+    ms2.load(filepath, read_editable=True)
+    scene = create_scene(ms2_path.stem, len(ms2.modelstream_names), ms2.context.version)
+    bpy.context.window.scene = scene
+    for model_info in ms2.model_infos:
+        collection = create_collection(model_info.name, scene.collection)
+        collection["render_flag"] = int(model_info.render_flag)
+        import_armature(scene, model_info, get_bone_names(model_info), collection)
+    reporter.show_info(f"Imported armature only: {ms2_path.name}")
+
+
 def declared_action_names(manis_path: Path) -> set[str]:
     """Read the authoritative MANIS action names before Blender import."""
     from generated.formats.manis import ManisFile
@@ -178,13 +227,14 @@ def write_skeleton_meta(armature, output_path: Path) -> None:
     output_path.write_text(json.dumps({"bones": bones}, indent=2), encoding="utf-8")
 
 
-def export_bvh(armature, action, output_path: Path) -> None:
+def export_bvh(armature, action, output_path: Path, fps: int) -> None:
     frame_start = int(action.frame_range[0])
     frame_end = int(action.frame_range[1])
     scene = bpy.context.scene
     scene.frame_start = frame_start
     scene.frame_end = frame_end
-    scene.render.fps = 20
+    scene.render.fps = fps
+    scene.render.fps_base = 1.0
     if armature.animation_data is None:
         armature.animation_data_create()
     armature.animation_data.action = action
@@ -203,11 +253,12 @@ def export_bvh(armature, action, output_path: Path) -> None:
     promote_single_child_root(output_path)
 
 
-def export_rest_bvh(armature, output_path: Path) -> None:
+def export_rest_bvh(armature, output_path: Path, fps: int) -> None:
     scene = bpy.context.scene
     scene.frame_start = 1
     scene.frame_end = 2
-    scene.render.fps = 20
+    scene.render.fps = fps
+    scene.render.fps_base = 1.0
     if armature.animation_data is not None:
         armature.animation_data.action = None
     pose_position = armature.data.pose_position
@@ -293,6 +344,8 @@ def process_object_dir(
     only_manis_contains,
     target_stems_by_object,
     disable_ik,
+    fps,
+    armature_only,
 ):
     ms2_files = sorted(object_dir.glob("*.ms2"))
     manis_files = sorted(object_dir.glob("*.manis"))
@@ -313,40 +366,47 @@ def process_object_dir(
             print(f"SKIP {object_dir.name}: no target text rows")
             return 0, object_manifest_path
 
+    safe_clear_scene()
+    print(f"LOAD_RIG {object_dir.name} :: {ms2_path.name}")
+    if armature_only:
+        import_ms2_armature_only(reporter=reporter, filepath=str(ms2_path))
+    else:
+        import_ms2.load(reporter=reporter, filepath=str(ms2_path))
+    armature = find_armature()
+    if armature is None:
+        print(f"NO_ARMATURE {object_dir.name}")
+        return 0, object_manifest_path
+    write_skeleton_meta(armature, object_out / "skeleton_meta.json")
+    ms2_stem = ms2_path.stem
+    animal_key = ms2_stem.rstrip("_")
+    rest_bvh_name = f"{safe_name(ms2_stem)}__tpos.bvh"
+    rest_bvh_path = object_out / "raw_bvhs" / rest_bvh_name
+    if not rest_bvh_path.exists():
+        export_rest_bvh(armature, rest_bvh_path, fps)
+        print(f"EXPORTED {rest_bvh_name}")
+    rest_entry = {
+        "sample_type": "tpose",
+        "object_dir": object_dir.name,
+        "object_key": safe_name(object_dir.stem),
+        "animal_key": animal_key,
+        "ms2_file": ms2_path.name,
+        "manis_file": None,
+        "action_name": "tpos",
+        "action_short": "tpos",
+        "source_motion_key": f"{animal_key}@tpos",
+        "raw_bvh": str(rest_bvh_path.resolve()),
+        "raw_bvh_stem": Path(rest_bvh_name).stem,
+        "export_fps": fps,
+        "ms2_import_mode": "armature_only" if armature_only else "full",
+    }
+    with object_manifest_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rest_entry, ensure_ascii=False) + "\n")
+
     for manis_path in manis_files:
         if only_manis_contains and only_manis_contains.lower() not in manis_path.name.lower():
             continue
-        safe_clear_scene()
+        clear_imported_actions(armature)
         print(f"LOAD {object_dir.name} :: {manis_path.name}")
-        import_ms2.load(reporter=reporter, filepath=str(ms2_path))
-        armature = find_armature()
-        if armature is None:
-            print(f"NO_ARMATURE {object_dir.name}")
-            continue
-
-        write_skeleton_meta(armature, object_out / "skeleton_meta.json")
-        ms2_stem = ms2_path.stem
-        animal_key = ms2_stem.rstrip("_")
-        rest_bvh_name = f"{safe_name(ms2_stem)}__tpos.bvh"
-        rest_bvh_path = object_out / "raw_bvhs" / rest_bvh_name
-        if not rest_bvh_path.exists():
-            export_rest_bvh(armature, rest_bvh_path)
-            print(f"EXPORTED {rest_bvh_name}")
-            rest_entry = {
-                "sample_type": "tpose",
-                "object_dir": object_dir.name,
-                "object_key": safe_name(object_dir.stem),
-                "animal_key": animal_key,
-                "ms2_file": ms2_path.name,
-                "manis_file": None,
-                "action_name": "tpos",
-                "action_short": "tpos",
-                "source_motion_key": f"{animal_key}@tpos",
-                "raw_bvh": str(rest_bvh_path.resolve()),
-                "raw_bvh_stem": Path(rest_bvh_name).stem,
-            }
-            with object_manifest_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rest_entry, ensure_ascii=False) + "\n")
 
         try:
             declared_names = declared_action_names(manis_path)
@@ -378,7 +438,7 @@ def process_object_dir(
             raw_bvh_stem = Path(bvh_name).stem
             if target_stems is not None and raw_bvh_stem.lower() not in target_stems:
                 continue
-            export_bvh(armature, action, object_out / "raw_bvhs" / bvh_name)
+            export_bvh(armature, action, object_out / "raw_bvhs" / bvh_name, fps)
             print(f"EXPORTED {bvh_name}")
             short_action = action_short_name(ms2_stem, action.name)
             manifest_entry = {
@@ -396,6 +456,8 @@ def process_object_dir(
                 "ik_disabled_during_export": bool(disable_ik),
                 "raw_bvh": str((object_out / "raw_bvhs" / bvh_name).resolve()),
                 "raw_bvh_stem": raw_bvh_stem,
+                "export_fps": fps,
+                "ms2_import_mode": "armature_only" if armature_only else "full",
             }
             with object_manifest_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(manifest_entry, ensure_ascii=False) + "\n")
@@ -411,6 +473,8 @@ def process_object_dir(
 
 def main() -> None:
     args = parse_args()
+    if args.fps <= 0:
+        raise ValueError("--fps must be positive")
     cobra_tools = Path(args.cobra_tools)
     input_root = Path(args.input_root)
     output_root = Path(args.output_root)
@@ -451,6 +515,8 @@ def main() -> None:
                 args.only_manis_contains,
                 target_stems_by_object,
                 args.disable_ik,
+                args.fps,
+                not args.full_ms2,
             )
             summary[object_dir.name] = count
             if manifest_path.exists():

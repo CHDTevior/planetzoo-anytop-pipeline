@@ -19,9 +19,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-root", required=True)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--objects", nargs="*", default=None)
+    parser.add_argument(
+        "--objects-file",
+        type=Path,
+        help="Optional UTF-8 file containing one extracted *.ovl directory name per line.",
+    )
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-objects", type=int, default=None)
     parser.add_argument("--max-actions", type=int, default=None)
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=20,
+        help="BVH frame rate passed to Blender. KTJD-17 requires 30.",
+    )
     parser.add_argument("--only-manis-contains", default=None)
     parser.add_argument(
         "--target-text-root",
@@ -29,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional AniMo4D text directory. Passed to the Blender exporter to export only target-captioned actions.",
     )
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--disable-ik",
+        action="store_true",
+        help="Pass --disable-ik to the isolated Cobra MANIS importer.",
+    )
+    parser.add_argument("--full-ms2", action="store_true", help="Pass --full-ms2 to the Blender exporter.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip-complete", action="store_true")
     return parser.parse_args()
@@ -45,6 +62,19 @@ def find_objects(input_root: Path, requested: list[str] | None) -> list[str]:
     if requested:
         return requested
     return [p.name for p in sorted(input_root.iterdir()) if p.is_dir()]
+
+
+def load_objects_file(path: Path | None) -> list[str] | None:
+    if path is None:
+        return None
+    values = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        value = line.strip()
+        if value and not value.startswith("#"):
+            values.append(value)
+    if len(values) != len(set(values)):
+        raise ValueError(f"duplicate object names in {path}")
+    return values
 
 
 def expected_raw_stem_from_text_name(name: str) -> str | None:
@@ -167,6 +197,11 @@ def export_one(
         cmd.extend(["--only-manis-contains", args.only_manis_contains])
     if args.target_text_root:
         cmd.extend(["--target-text-root", args.target_text_root])
+    if args.disable_ik:
+        cmd.append("--disable-ik")
+    if args.full_ms2:
+        cmd.append("--full-ms2")
+    cmd.extend(["--fps", str(args.fps)])
 
     with log_path.open("w", encoding="utf-8", errors="ignore") as log_f:
         result = subprocess.run(cmd, stdout=log_f, stderr=subprocess.STDOUT, text=True)
@@ -181,6 +216,7 @@ def export_one(
         "output_dir": str(object_out),
         "bvh_count": bvh_count,
         "motion_bvh_count": motion_count,
+        "ik_disabled_during_export": bool(args.disable_ik),
     }
     status_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return record
@@ -188,6 +224,8 @@ def export_one(
 
 def main() -> None:
     args = parse_args()
+    if args.fps <= 0:
+        raise ValueError("--fps must be positive")
     input_root = Path(args.input_root)
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -198,7 +236,10 @@ def main() -> None:
     status_jsonl = output_root / "parallel_bvh_export_status.jsonl"
     exporter = Path(__file__).resolve().with_name("planetzoo_fulltopo_bvh_export.py")
 
-    objects = find_objects(input_root, args.objects)
+    file_objects = load_objects_file(args.objects_file)
+    if args.objects and file_objects:
+        raise ValueError("Use either --objects or --objects-file, not both")
+    objects = find_objects(input_root, args.objects if args.objects else file_objects)
     targets = target_object_names(args.target_text_root)
     if targets is not None:
         before = len(objects)
@@ -249,6 +290,9 @@ def main() -> None:
     summary = {
         "objects_requested": len(objects),
         "workers": args.workers,
+        "disable_ik": bool(args.disable_ik),
+        "export_fps": args.fps,
+        "ms2_import_mode": "full" if args.full_ms2 else "armature_only",
         "seconds": round(time.time() - started, 3),
         "object_manifests": manifest_count,
         "manifest_rows": manifest_rows,
