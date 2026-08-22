@@ -106,6 +106,22 @@ errors, or invalid heading rows.  FK reconstructed from `rest_delta_6d` and
 the skeleton matches `q_position + smooth_root_xz` with mean error
 `2.60e-8` and maximum error `3.77e-6`.
 
+## Hugging Face release layout
+
+The canonical local corpus uses a flat `motions/<clip_id>.npz` layout. Before
+publishing to Hugging Face, run the release-only sharder so no remote directory
+contains more than the Hub's 10,000-file limit. It moves payloads to
+`motions/<rig_id>/<clip_id>.npz`, rewrites only `motion_file` entries in the
+release manifest, and leaves the canonical corpus untouched.
+
+```powershell
+& $py "$repo\tools\planetzoo\shard_ktjd17_hf_release.py" `
+  --release-root H:\work\KTJD17_PlanetZoo_Fresh_release --apply
+
+& $py "$repo\tools\planetzoo\validate_ktjd17_pz_dataset.py" `
+  --dataset-root H:\work\KTJD17_PlanetZoo_Fresh_release\data --workers 8
+```
+
 Use `render_ktjd17_compare.py` to render two synchronized skeletons: the
 left path reconstructs world positions from q-position, the right path uses
 only rest-delta-6D FK.  Both draw the coordinate axes.

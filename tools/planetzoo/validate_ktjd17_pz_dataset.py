@@ -88,8 +88,11 @@ def main() -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         clip_results = list(executor.map(validate_clip, tasks))
     clip_errors = [result for result in clip_results if result["errors"]]
-    motion_files = {path.stem for path in (root / "motions").glob("*.npz")}
-    manifest_files = {clip["clip_id"] for clip in clips}
+    motion_files = {
+        path.relative_to(root).as_posix()
+        for path in (root / "motions").rglob("*.npz")
+    }
+    manifest_files = {clip["motion_file"] for clip in clips}
     fps_counts = Counter(int(clip["source_fps"]) for clip in clips)
     report = {
         "dataset_root": str(root),
