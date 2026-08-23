@@ -35,6 +35,8 @@ The encoded corpus uses the supplied canonical joint-spec file:
 H:\AniMo4D_work\releases\KTJD17_PlanetZoo_Fresh_v1\protocol\20260822_pzh312_joint_names_descriptions.json
 ```
 
+SHA-256: `E9BF34078B6DE6E5769B399521C5D24E8ECA84ED5C28B503E875F526FF3F1E9C`.
+
 For each `PZ_*` rig, its `rigs[rig_id].joints` list is authoritative. It fixes:
 
 - joint name and output order;
