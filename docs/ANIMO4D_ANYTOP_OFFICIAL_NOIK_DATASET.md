@@ -35,14 +35,14 @@ Every compressed motion file stores `motion` with shape `[T, J, 17]`:
 | `13:15` | root horizontal trajectory (`smooth_root_xz`) |
 | `15:17` | heading cosine and sine |
 
-`T` is 19 through 299 after velocity/contact derivation. Full topology is retained; this release has 34 to 102 joints depending on the rig. `skeletons/<rig>.json` provides joint names, parent indices, rest offsets, and kinematic chains. The `rest_delta_6d` channels plus rest offsets are sufficient to recover the complete skeletal pose by forward kinematics.
+`T` is 19 through 299 after velocity/contact derivation. Full topology is retained; this release has 34 to 102 joints depending on the rig. `skeletons/<rig>.npz` provides joint names, parent indices, rest offsets, rest rotations, contact joints, and source-rotation metadata. The `rest_delta_6d` channels plus rest offsets are sufficient to recover the complete skeletal pose by forward kinematics.
 
 ## Layout
 
 ```text
 data/
   motions/<rig>/<clip_id>.npz
-  skeletons/<rig>.json
+  skeletons/<rig>.npz
   stats/<rig>.npz
   manifests/clips.jsonl
   manifests/generation.json
