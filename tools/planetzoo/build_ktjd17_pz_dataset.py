@@ -48,11 +48,28 @@ DEFAULT_FACE_NAMES = ("def_c_hips_joint", "def_c_chest_joint")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-root", type=Path, required=True)
+    parser.add_argument(
+        "--export-manifest",
+        type=Path,
+        help="Defaults to raw_root/export_manifest.jsonl; useful for a completed rolling subset.",
+    )
     parser.add_argument("--joint-spec", type=Path, required=True)
     parser.add_argument("--caption-manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--rig-id", action="append", help="Restrict conversion to one or more explicit rig IDs.")
+    parser.add_argument(
+        "--official-id",
+        action="append",
+        help="Restrict conversion to explicit official AniMo4D action IDs for focused QC.",
+    )
+    parser.add_argument(
+        "--clip-id-mode",
+        choices=("source-stem", "sha1-20"),
+        default="source-stem",
+        help="Use short deterministic IDs to keep the full corpus below Windows path limits.",
+    )
     parser.add_argument("--max-rigs", type=int)
     parser.add_argument("--max-clips-per-rig", type=int)
     parser.add_argument(
@@ -70,6 +87,14 @@ def read_jsonl(path: Path) -> list[dict]:
 
 def safe_stem(value: str) -> str:
     return "".join(char if char.isalnum() or char in "_-" else "_" for char in value)
+
+
+def clip_id_for_source(raw_bvh_stem: str, mode: str) -> str:
+    if mode == "source-stem":
+        return safe_stem(raw_bvh_stem)
+    if mode == "sha1-20":
+        return hashlib.sha1(raw_bvh_stem.lower().encode("utf-8")).hexdigest()[:20]
+    raise ValueError(f"Unsupported clip ID mode: {mode}")
 
 
 def sha256_strings(strings: list[str]) -> str:
@@ -209,7 +234,7 @@ class RunningStats:
 def load_caption_map(path: Path) -> dict[str, dict]:
     captions: dict[str, dict] = {}
     for row in read_jsonl(path):
-        stem = row.get("raw_bvh_stem")
+        stem = row.get("raw_bvh_stem") or row.get("official_raw_bvh_stem")
         if stem and row.get("text_status") == "present":
             captions[stem.lower()] = {
                 "texts": row.get("texts", [row.get("text", "")]),
@@ -220,8 +245,11 @@ def load_caption_map(path: Path) -> dict[str, dict]:
     return captions
 
 
-def grouped_verified_records(raw_root: Path, rig_ids: set[str], captions: dict[str, dict], args: argparse.Namespace) -> dict[str, list[dict]]:
-    rows = read_jsonl(raw_root / "export_manifest.jsonl")
+def grouped_verified_records(
+    raw_root: Path, manifest: Path, rig_ids: set[str], captions: dict[str, dict], args: argparse.Namespace
+) -> dict[str, list[dict]]:
+    rows = read_jsonl(manifest)
+    requested_official_ids = set(args.official_id or [])
     tposes: dict[str, dict] = {}
     motions: dict[str, list[dict]] = {rig: [] for rig in rig_ids}
     for row in rows:
@@ -234,6 +262,8 @@ def grouped_verified_records(raw_root: Path, rig_ids: set[str], captions: dict[s
             tposes[rig_id] = row
             continue
         if row.get("sample_type") != "motion":
+            continue
+        if requested_official_ids and row.get("official_id") not in requested_official_ids:
             continue
         if not row.get("source_action_verified") or not row.get("ik_disabled_during_export"):
             raise ValueError(f"Unverified or IK-enabled BVH: {row.get('raw_bvh')}")
@@ -250,6 +280,11 @@ def grouped_verified_records(raw_root: Path, rig_ids: set[str], captions: dict[s
         records.sort(key=lambda row: row["raw_bvh_stem"])
         if args.max_clips_per_rig is not None:
             del records[args.max_clips_per_rig :]
+    if requested_official_ids:
+        found = {record.get("official_id") for records in motions.values() for record in records}
+        missing_requested = sorted(requested_official_ids - found)
+        if missing_requested:
+            raise ValueError(f"Requested official actions are absent from verified export manifest: {missing_requested[:5]}")
     return {rig: {"tpose": tposes[rig], "motions": records} for rig, records in motions.items() if records}
 
 
@@ -481,7 +516,7 @@ def process_rig(task: dict) -> dict:
         for source in task["motions"]:
             try:
                 motion, heading_valid, metrics = build_motion(context, Path(source["raw_bvh"]), task["fps"])
-                clip_id = safe_stem(source["raw_bvh_stem"])
+                clip_id = clip_id_for_source(source["raw_bvh_stem"], task["clip_id_mode"])
                 motion_path = output_root / "motions" / f"{clip_id}.npz"
                 if motion_path.exists():
                     raise ValueError(f"Duplicate clip_id: {clip_id}")
@@ -496,8 +531,12 @@ def process_rig(task: dict) -> dict:
                         "skeleton_file": skeleton_file,
                         "source_raw_bvh": source_rel,
                         "raw_bvh_stem": source["raw_bvh_stem"],
-                        "source_action_name": source["action_name"],
-                        "source_motion_key": source["source_motion_key"],
+                        "official_id": source.get("official_id"),
+                        "source_action_name": source.get("source_blender_action")
+                        or source.get("source_declared_action")
+                        or source.get("action_name"),
+                        "source_motion_key": source.get("source_motion_key") or source.get("official_id"),
+                        "source_resolution": source.get("source_resolution"),
                         "source_action_verified": True,
                         "ik_disabled_during_export": True,
                         "fps_target": task["fps"],
@@ -544,10 +583,17 @@ def main() -> None:
     joint_spec = json.loads(args.joint_spec.read_text(encoding="utf-8"))
     rig_specs = {rig: value for rig, value in joint_spec["rigs"].items() if rig.startswith("PZ_")}
     rig_ids = sorted(rig_specs)
+    if args.rig_id:
+        requested = set(args.rig_id)
+        unknown = sorted(requested - set(rig_ids))
+        if unknown:
+            raise ValueError(f"Unknown requested rig IDs: {unknown}")
+        rig_ids = [rig for rig in rig_ids if rig in requested]
     if args.max_rigs is not None:
         rig_ids = rig_ids[: args.max_rigs]
     captions = load_caption_map(args.caption_manifest)
-    sources = grouped_verified_records(args.raw_root, set(rig_ids), captions, args)
+    export_manifest = args.export_manifest or args.raw_root / "export_manifest.jsonl"
+    sources = grouped_verified_records(args.raw_root, export_manifest, set(rig_ids), captions, args)
     missing = sorted(set(rig_ids) - set(sources))
     if missing:
         raise ValueError(f"No verified motion records for {len(missing)} requested rigs: {missing[:5]}")
@@ -564,16 +610,18 @@ def main() -> None:
     )
     generation = {
         "format": "KTJD-17",
-        "version": "20260822-pz-fresh-v1",
-        "source": "Planet Zoo Cobra MS2/MANIS",
+        "version": "20260823-animo4d-official-noik-v1",
+        "source": "AniMo4D official captions + Planet Zoo Cobra MS2/MANIS no-IK export",
         "rig_count_requested": len(rig_ids),
         "fps_target": args.fps,
+        "clip_id_mode": args.clip_id_mode,
         "coordinate_system": "right-handed, +Y up, +Z viewer-facing; heading measured from +Z",
         "motion_layout": "[q_position(3), rest_delta_6d(6), velocity_xyz(3), contact(1), smooth_root_xz(2), heading_cos_sin(2)]",
         "smooth_root": "root horizontal trajectory; no arbitrary smoothing was applied",
         "temporal_resampling": "BVH local rotations use shortest-path SLERP and local translations use linear interpolation when source FPS differs from fps_target.",
         "contact": "legacy PZ foot criteria: squared frame displacement <= 0.002 and relative foot height <= 0.3",
         "raw_bvh_root": str(args.raw_root),
+        "export_manifest": str(export_manifest),
         "joint_spec": str(args.joint_spec),
         "caption_manifest": str(args.caption_manifest),
         "code_revision": git_revision(),
@@ -587,6 +635,7 @@ def main() -> None:
             "tpose": sources[rig]["tpose"],
             "motions": sources[rig]["motions"],
             "fps": args.fps,
+            "clip_id_mode": args.clip_id_mode,
         }
         for rig in sorted(sources)
     ]

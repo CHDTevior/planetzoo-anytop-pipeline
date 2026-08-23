@@ -228,6 +228,7 @@ def write_skeleton_meta(armature, output_path: Path) -> None:
 
 
 def export_bvh(armature, action, output_path: Path, fps: int) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     frame_start = int(action.frame_range[0])
     frame_end = int(action.frame_range[1])
     scene = bpy.context.scene
