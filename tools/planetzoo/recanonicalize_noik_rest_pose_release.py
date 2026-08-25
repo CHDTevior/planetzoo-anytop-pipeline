@@ -1,12 +1,11 @@
 """Write a corrected no-IK release with canonical rest poses.
 
-The original no-IK release has a rig-wide constant basis in ``R_rest_global``.
-That basis was unintentionally retained in ``P_rest_global`` while the stored
-offsets already describe the intended +Y-up/+Z-forward rest skeleton.  This
-tool writes a *new* release: it replaces that rest basis by identity, converts
-the rot6d channel to the equivalent source-global rotations, and recomputes
-the per-rig normalization statistics.  Position, velocity, contact, root and
-heading channels are copied exactly.
+The release's saved rest pose is in a different global basis from motion.
+This tool derives each rig's original foot-support plane and body forward
+direction, rotates the *entire* skeleton into +Y-up / +Z-forward coordinates,
+and changes rot6d by the exact compensating basis transform. It writes a new
+release and recomputes per-rig normalization statistics; all non-rotational
+motion channels remain byte-for-byte equivalent.
 """
 
 from __future__ import annotations
@@ -59,6 +58,66 @@ def accumulate_offsets(offsets: np.ndarray, parents: np.ndarray) -> np.ndarray:
     for joint in range(1, len(parents)):
         positions[joint] = positions[int(parents[joint])] + offsets[joint]
     return positions
+
+
+def support_joint_indices(joint_names: list[str], parents: np.ndarray) -> list[int]:
+    candidates = [
+        index
+        for index, name in enumerate(joint_names)
+        if any(token in name.lower() for token in ("toe", "foot", "hoof", "ashi", "paw", "phalanx"))
+    ]
+    candidate_set = set(candidates)
+    return [
+        index
+        for index in candidates
+        if not any(int(parent) == index and child in candidate_set for child, parent in enumerate(parents))
+    ]
+
+
+def canonical_ground_transform(
+    positions: np.ndarray, joint_names: list[str], parents: np.ndarray, face: list[int]
+) -> tuple[np.ndarray, dict[str, float | int]]:
+    support = support_joint_indices(joint_names, parents)
+    if len(support) < 3:
+        raise ValueError("Need at least three terminal foot/toe joints to define a rest ground plane")
+    support_points = positions[support]
+    centre = support_points.mean(axis=0)
+    _, singular_values, vectors = np.linalg.svd(support_points - centre, full_matrices=False)
+    if singular_values[1] <= 1e-8:
+        raise ValueError("Rest support joints are collinear")
+    normal = vectors[-1]
+    core = [
+        index
+        for index, name in enumerate(joint_names)
+        if any(token in name.lower() for token in ("hips", "spine", "chest", "neck"))
+    ]
+    core_point = positions[core].mean(axis=0) if core else positions[0]
+    if float(np.dot(core_point - centre, normal)) < 0.0:
+        normal = -normal
+    forward = positions[face[1]] - positions[face[0]]
+    forward -= normal * np.dot(forward, normal)
+    forward /= max(float(np.linalg.norm(forward)), 1e-12)
+    right = np.cross(normal, forward)
+    right /= max(float(np.linalg.norm(right)), 1e-12)
+    basis = np.stack((right, normal, forward), axis=1)
+    return basis.T, {
+        "support_joint_count": len(support),
+        "support_plane_rms": float(np.std((support_points - centre) @ normal)),
+    }
+
+
+def apply_global_rotation(positions: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    root = positions[0]
+    return (positions - root) @ rotation.T + root
+
+
+def local_from_global(global_rotation: np.ndarray, parents: np.ndarray) -> np.ndarray:
+    local = np.empty_like(global_rotation)
+    local[0] = global_rotation[0]
+    for joint in range(1, len(parents)):
+        parent = int(parents[joint])
+        local[joint] = global_rotation[parent].T @ global_rotation[joint]
+    return local
 
 
 def decode_world_positions(motion: np.ndarray, rotations: np.ndarray, parents: np.ndarray, offsets: np.ndarray) -> np.ndarray:
@@ -129,20 +188,25 @@ def write_canonical_skeleton(source_path: Path, source_stats_path: Path, output_
         payload = {key: source[key].copy() for key in source.files}
     parents = payload["parents"].astype(np.int64)
     offsets = payload["offset_parent_local"].astype(np.float64)
+    previous_rest = payload["P_rest_global"].astype(np.float64)
     old_global = payload["R_rest_global"].astype(np.float64)
     shared_basis = old_global[0]
     max_within_rig_error = float(np.abs(old_global - shared_basis).max())
     if max_within_rig_error > 1e-5:
         raise ValueError(f"{source_path.name}: R_rest_global is not rig-wide constant ({max_within_rig_error})")
-    corrected_rest = accumulate_offsets(offsets, parents)
+    names = payload["joint_names"].astype(str).tolist()
+    face_names = payload["face_joint_names"].astype(str).tolist()
+    face = [names.index(name) for name in face_names]
+    correction, plane_info = canonical_ground_transform(previous_rest, names, parents, face)
+    corrected_rest = apply_global_rotation(previous_rest, correction)
     offsets = offsets.copy()
     offsets[0, 1] -= corrected_rest[:, 1].min()
-    corrected_rest = accumulate_offsets(offsets, parents)
-    identity = np.broadcast_to(np.eye(3, dtype=np.float32), old_global.shape).copy()
+    corrected_rest[:, 1] -= corrected_rest[:, 1].min()
+    corrected_global = correction[None] @ old_global
     payload["offset_parent_local"] = offsets.astype(np.float32)
     payload["P_rest_global"] = corrected_rest.astype(np.float32)
-    payload["R_rest_global"] = identity
-    payload["R_rest_local"] = identity
+    payload["R_rest_global"] = corrected_global.astype(np.float32)
+    payload["R_rest_local"] = local_from_global(corrected_global, parents).astype(np.float32)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_path, **payload)
     with np.load(source_stats_path, allow_pickle=False) as source_stats:
@@ -150,12 +214,14 @@ def write_canonical_skeleton(source_path: Path, source_stats_path: Path, output_
     return {
         "parents": parents,
         "offsets": offsets,
-        "shared_basis": shared_basis,
+        "correction": correction,
+        "corrected_global": corrected_global,
         "supervise_mask": supervise_mask,
         "joint_count": len(parents),
         "max_within_rig_error": max_within_rig_error,
         "corrected_rest_min_y": float(corrected_rest[:, 1].min()),
         "corrected_rest_max_y": float(corrected_rest[:, 1].max()),
+        **plane_info,
     }
 
 
@@ -163,7 +229,8 @@ def process_rig(task: dict[str, object]) -> dict[str, object]:
     rig_id = str(task["rig_id"])
     input_data = Path(str(task["input_data"]))
     output_data = Path(str(task["output_data"]))
-    shared_basis = np.asarray(task["shared_basis"], dtype=np.float64)
+    correction = np.asarray(task["correction"], dtype=np.float64)
+    corrected_rest_global = np.asarray(task["corrected_global"], dtype=np.float64)
     parents = np.asarray(task["parents"], dtype=np.int64)
     offsets = np.asarray(task["offsets"], dtype=np.float64)
     supervise_mask = np.asarray(task["supervise_mask"], dtype=bool)
@@ -177,15 +244,17 @@ def process_rig(task: dict[str, object]) -> dict[str, object]:
             payload = {key: source[key].copy() for key in source.files}
         original_motion = payload["motion"]
         delta = matrix_from_cont6d(original_motion[:, :, 3:9].astype(np.float64))
-        corrected_rotation = delta @ shared_basis[None, None]
+        corrected_delta = delta @ correction.T
         corrected_motion = original_motion.copy()
-        corrected_motion[:, :, 3:9] = cont6d_from_matrix(corrected_rotation).astype(np.float32)
+        corrected_motion[:, :, 3:9] = cont6d_from_matrix(corrected_delta).astype(np.float32)
         payload["motion"] = corrected_motion
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(output_path, **payload)
         stats.update(corrected_motion, payload["heading_valid"])
         if index == 0:
-            recovered = decode_world_positions(corrected_motion, corrected_rotation, parents, offsets)
+            corrected_delta = matrix_from_cont6d(corrected_motion[:, :, 3:9].astype(np.float64))
+            corrected_global = corrected_delta @ corrected_rest_global[None]
+            recovered = decode_world_positions(corrected_motion, corrected_global, parents, offsets)
             expected = original_motion[:, :, :3].astype(np.float64)
             expected[:, :, 0] += original_motion[:, 0, 13, None]
             expected[:, :, 2] += original_motion[:, 0, 14, None]
@@ -231,10 +300,11 @@ def write_generation(input_data: Path, output_data: Path) -> None:
     generation = json.loads(source_path.read_text(encoding="utf-8")) if source_path.exists() else {}
     generation["version"] = str(generation.get("version", "noik-release")) + "-canonical-rest-v1"
     generation["rest_pose_recanonicalization"] = {
-        "input_rest_basis": "per-rig R_rest_global constant shared by every joint",
-        "output_rest_basis": "identity for every joint",
-        "output_rest_position": "forward accumulation of offset_parent_local",
-        "rot6d_3_9": "old_delta_rotation @ old_rig_rest_basis",
+        "input_rest_basis": "rest skeleton basis differs from stored motion world coordinates",
+        "ground_and_forward": "terminal toe/foot support plane becomes XZ; projected hips-to-chest direction becomes +Z",
+        "output_rest_basis": "C @ old_R_rest_global, where C is the per-rig ground-plane transform",
+        "output_rest_position": "C rotates the full old P_rest_global rigidly around root; root is then shifted so min Y=0",
+        "rot6d_3_9": "old_delta_rotation @ C.T",
         "unchanged_channels": "q_position 0:3, velocity 9:12, contact 12, root_xz 13:15, heading 15:17",
         "coordinate_system": "right-handed, +Y up, +Z viewer-facing",
     }
@@ -281,7 +351,8 @@ def main() -> None:
                 "rig_id": rig_id,
                 "input_data": str(input_data),
                 "output_data": str(output_data),
-                "shared_basis": report["shared_basis"],
+                "correction": report["correction"],
+                "corrected_global": report["corrected_global"],
                 "parents": report["parents"],
                 "offsets": report["offsets"],
                 "supervise_mask": report["supervise_mask"],
@@ -307,6 +378,8 @@ def main() -> None:
                 "rest_basis_within_rig_max_abs_error": skeleton["max_within_rig_error"],
                 "corrected_rest_min_y": skeleton["corrected_rest_min_y"],
                 "corrected_rest_max_y": skeleton["corrected_rest_max_y"],
+                "support_joint_count": skeleton["support_joint_count"],
+                "support_plane_rms": skeleton["support_plane_rms"],
             }
         )
     report_dir = output_data / "reports"

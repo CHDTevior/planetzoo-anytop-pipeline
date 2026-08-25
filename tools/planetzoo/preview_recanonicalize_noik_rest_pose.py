@@ -96,11 +96,69 @@ def decode_world_positions(motion: np.ndarray, rotations: np.ndarray, parents: n
     return positions
 
 
-def recanonicalize_motion(motion: np.ndarray, rest_global_rotation: np.ndarray) -> np.ndarray:
+def support_joint_indices(joint_names: list[str], parents: np.ndarray) -> list[int]:
+    candidates = [
+        index
+        for index, name in enumerate(joint_names)
+        if any(token in name.lower() for token in ("toe", "foot", "hoof", "ashi", "paw", "phalanx"))
+    ]
+    candidate_set = set(candidates)
+    return [
+        index
+        for index in candidates
+        if not any(int(parent) == index and child in candidate_set for child, parent in enumerate(parents))
+    ]
+
+
+def canonical_ground_transform(
+    positions: np.ndarray, joint_names: list[str], parents: np.ndarray, face: list[int]
+) -> tuple[np.ndarray, dict[str, float | int]]:
+    support = support_joint_indices(joint_names, parents)
+    if len(support) < 3:
+        raise ValueError("Need at least three terminal foot/toe joints to define a rest ground plane")
+    support_points = positions[support]
+    centre = support_points.mean(axis=0)
+    _, singular_values, vectors = np.linalg.svd(support_points - centre, full_matrices=False)
+    if singular_values[1] <= 1e-8:
+        raise ValueError("Rest support joints are collinear")
+    normal = vectors[-1]
+    core = [
+        index
+        for index, name in enumerate(joint_names)
+        if any(token in name.lower() for token in ("hips", "spine", "chest", "neck"))
+    ]
+    core_point = positions[core].mean(axis=0) if core else positions[0]
+    if float(np.dot(core_point - centre, normal)) < 0.0:
+        normal = -normal
+    forward = positions[face[1]] - positions[face[0]]
+    forward -= normal * np.dot(forward, normal)
+    forward /= max(float(np.linalg.norm(forward)), 1e-12)
+    right = np.cross(normal, forward)
+    right /= max(float(np.linalg.norm(right)), 1e-12)
+    basis = np.stack((right, normal, forward), axis=1)
+    residual = float(np.std((support_points - centre) @ normal))
+    return basis.T, {"support_joint_count": len(support), "support_plane_rms": residual}
+
+
+def apply_global_rotation(positions: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    root = positions[0]
+    return (positions - root) @ rotation.T + root
+
+
+def local_from_global(global_rotation: np.ndarray, parents: np.ndarray) -> np.ndarray:
+    local = np.empty_like(global_rotation)
+    local[0] = global_rotation[0]
+    for joint in range(1, len(parents)):
+        parent = int(parents[joint])
+        local[joint] = global_rotation[parent].T @ global_rotation[joint]
+    return local
+
+
+def recanonicalize_motion(motion: np.ndarray, correction: np.ndarray) -> np.ndarray:
     corrected = motion.copy()
     delta = matrix_from_cont6d(motion[:, :, 3:9].astype(np.float64))
-    source_global = delta @ rest_global_rotation[None, None]
-    corrected[:, :, 3:9] = cont6d_from_matrix(source_global).astype(np.float32)
+    corrected_delta = delta @ correction.T
+    corrected[:, :, 3:9] = cont6d_from_matrix(corrected_delta).astype(np.float32)
     return corrected
 
 
@@ -119,7 +177,7 @@ def render_triplet(
 ) -> None:
     rows = (
         ("CURRENT REST: saved P_rest_global", original_rest, original_forward, REST_COLOR),
-        ("CORRECTED REST: offsets + identity rest rotation", corrected_rest, corrected_forward, CANONICAL_REST_COLOR),
+        ("CORRECTED REST: original support plane -> XZ ground", corrected_rest, corrected_forward, CANONICAL_REST_COLOR),
         ("MOTION frame 0: unchanged world position channels", motion_frame, motion_forward, MOTION_COLOR),
     )
     canvas = Image.new("RGB", (panel_width * 3, panel_height * 3 + 54), (246, 247, 249))
@@ -138,7 +196,7 @@ def render_triplet(
             canvas.paste(panel, (column * panel_width, 54 + row_index * panel_height))
     ImageDraw.Draw(canvas).text(
         (16, 15),
-        f"{rig_id} | correction changes rest basis only; q_position stays untouched",
+        f"{rig_id} | full rest skeleton rotated from original foot plane; q_position stays untouched",
         fill=TEXT_COLOR,
         font=font(23),
     )
@@ -175,15 +233,19 @@ def main() -> None:
         if within_rig_error > 1e-5:
             raise ValueError(f"{rig_id}: rest global rotations are not one shared basis ({within_rig_error})")
 
-        corrected_rest = accumulate_offsets(offsets, parents)
+        names = payload["joint_names"].astype(str).tolist()
+        faces = payload["face_joint_names"].astype(str).tolist()
+        indices = face_indices(names, faces)
+        correction, plane_info = canonical_ground_transform(previous_rest, names, parents, indices)
+        corrected_rest = apply_global_rotation(previous_rest, correction)
         offsets = offsets.copy()
         offsets[0, 1] -= corrected_rest[:, 1].min()
-        corrected_rest = accumulate_offsets(offsets, parents)
-        identity = np.broadcast_to(np.eye(3, dtype=np.float32), previous_global_rotation.shape).copy()
+        corrected_rest[:, 1] -= corrected_rest[:, 1].min()
+        corrected_global_rotation = correction[None] @ previous_global_rotation
         payload["offset_parent_local"] = offsets.astype(np.float32)
         payload["P_rest_global"] = corrected_rest.astype(np.float32)
-        payload["R_rest_global"] = identity
-        payload["R_rest_local"] = identity
+        payload["R_rest_global"] = corrected_global_rotation.astype(np.float32)
+        payload["R_rest_local"] = local_from_global(corrected_global_rotation, parents).astype(np.float32)
         skeleton_out.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(skeleton_out / skeleton_path.name, **payload)
 
@@ -191,14 +253,15 @@ def main() -> None:
         with np.load(data_root / clip["motion_file"], allow_pickle=False) as source:
             motion_payload = {key: source[key].copy() for key in source.files}
         original_motion = motion_payload["motion"]
-        corrected_motion = recanonicalize_motion(original_motion, shared_rotation)
+        corrected_motion = recanonicalize_motion(original_motion, correction)
         motion_payload["motion"] = corrected_motion
         motion_out.mkdir(parents=True, exist_ok=True)
         preview_motion_path = motion_out / f"{rig_id}__{Path(clip['motion_file']).stem}.npz"
         np.savez_compressed(preview_motion_path, **motion_payload)
 
-        source_rotation = matrix_from_cont6d(corrected_motion[:, :, 3:9].astype(np.float64))
-        recovered = decode_world_positions(corrected_motion, source_rotation, parents, offsets)
+        corrected_delta = matrix_from_cont6d(corrected_motion[:, :, 3:9].astype(np.float64))
+        corrected_global = corrected_delta @ corrected_global_rotation[None]
+        recovered = decode_world_positions(corrected_motion, corrected_global, parents, offsets)
         stored_world = original_motion[:, :, :3].astype(np.float64)
         stored_world[:, :, 0] += original_motion[:, 0, 13, None]
         stored_world[:, :, 2] += original_motion[:, 0, 14, None]
@@ -206,9 +269,6 @@ def main() -> None:
         if motion_fk_max_error > 1e-4:
             raise ValueError(f"{rig_id}: corrected FK error too large ({motion_fk_max_error})")
 
-        names = payload["joint_names"].astype(str).tolist()
-        faces = payload["face_joint_names"].astype(str).tolist()
-        indices = face_indices(names, faces)
         render_triplet(
             gallery_out / f"{rig_id}.png",
             rig_id,
@@ -231,6 +291,7 @@ def main() -> None:
                 "corrected_motion_fk_max_abs_error": motion_fk_max_error,
                 "corrected_rest_min_y": float(corrected_rest[:, 1].min()),
                 "corrected_rest_max_y": float(corrected_rest[:, 1].max()),
+                **plane_info,
             }
         )
     args.output_dir.mkdir(parents=True, exist_ok=True)

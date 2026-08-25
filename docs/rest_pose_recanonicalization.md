@@ -14,18 +14,23 @@ NumPy. The input directory is never modified.
 ## Why This Is Needed
 
 The original release contains a rig-wide constant matrix in
-`skeletons/<rig>.npz:R_rest_global`. Its `P_rest_global` was FKed with that
-matrix, which makes the displayed rest skeleton lie in the wrong basis even
-though the animated motion coordinates are `+Y`-up / `+Z`-forward.
+`skeletons/<rig>.npz:R_rest_global`, while its saved static skeleton is in a
+different global basis from its motion world coordinates. Treating that root
+basis as a ground transform is wrong: it can make a four-legged animal stand
+with its front and rear feet at different heights.
 
 For every rig, the repair does the following:
 
-1. Confirms all joints share one old rest-basis matrix `B`.
-2. Replaces `R_rest_global` and `R_rest_local` by identity matrices.
-3. Rebuilds `P_rest_global` by accumulating `offset_parent_local`, then moves
-   the root upward so the rest skeleton's lowest point is at `Y=0`.
-4. Converts `motion[..., 3:9]` from old rest-delta rotation `D` to the
-   equivalent canonical rotation `D @ B`.
+1. Finds terminal toe/foot/hoof joints and fits their original rest-pose
+   support plane.
+2. Uses the plane normal as the canonical `+Y` direction and the hips-to-chest
+   vector projected onto that plane as canonical `+Z`.
+3. Applies this one rigid rotation `C` to the full rest skeleton, preserving
+   the original foot plane, then translates the root so the lowest point is
+   at `Y=0`.
+4. Converts every `motion[..., 3:9]` rest-delta rotation `D` to `D @ C.T`, and
+   transforms `R_rest_global` by `C`; their product, and therefore every FK
+   world position, remains unchanged.
 5. Recomputes each rig's `stats/<rig>.npz` from the rewritten motion files.
 
 Channels `0:3`, `9:12`, `12`, `13:15`, and `15:17` are copied unchanged. The
