@@ -35,7 +35,15 @@ For every rig, the repair does the following:
 
 Channels `0:3`, `9:12`, `12`, `13:15`, and `15:17` are copied unchanged. The
 first clip of every rig is checked by FK against the original world-position
-channels.
+channels. Every corrected skeleton is also checked for finite values, static
+FK reconstruction, a proper right-handed transform (determinant `+1`), exact
+`+Z` hips-to-chest heading, and `min(Y)=0`.
+
+The terminal toe/foot plane is an *orientation estimate*, not a deformation
+target. Paws, claws, flippers, and aquatic rigs can have terminal points at
+different heights in the source asset. The procedure keeps those differences:
+it never edits individual joints or bone lengths merely to make all terminals
+coplanar.
 
 ## Requirements
 

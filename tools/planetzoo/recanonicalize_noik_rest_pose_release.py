@@ -100,9 +100,13 @@ def canonical_ground_transform(
     right = np.cross(normal, forward)
     right /= max(float(np.linalg.norm(right)), 1e-12)
     basis = np.stack((right, normal, forward), axis=1)
+    support_distances = (support_points - centre) @ normal
+    skeleton_scale = max(float(np.ptp(positions, axis=0).max()), 1e-8)
     return basis.T, {
         "support_joint_count": len(support),
-        "support_plane_rms": float(np.std((support_points - centre) @ normal)),
+        "support_plane_rms": float(np.std(support_distances)),
+        "support_plane_relative_rms": float(np.std(support_distances) / skeleton_scale),
+        "support_plane_span": float(np.ptp(support_distances)),
     }
 
 
@@ -118,6 +122,17 @@ def local_from_global(global_rotation: np.ndarray, parents: np.ndarray) -> np.nd
         parent = int(parents[joint])
         local[joint] = global_rotation[parent].T @ global_rotation[joint]
     return local
+
+
+def rest_fk_max_error(
+    positions: np.ndarray, rotations: np.ndarray, parents: np.ndarray, offsets: np.ndarray
+) -> float:
+    reconstructed = np.empty_like(positions, dtype=np.float64)
+    reconstructed[0] = positions[0]
+    for joint in range(1, len(parents)):
+        parent = int(parents[joint])
+        reconstructed[joint] = reconstructed[parent] + rotations[parent] @ offsets[joint]
+    return float(np.abs(reconstructed - positions).max())
 
 
 def decode_world_positions(motion: np.ndarray, rotations: np.ndarray, parents: np.ndarray, offsets: np.ndarray) -> np.ndarray:
@@ -198,11 +213,29 @@ def write_canonical_skeleton(source_path: Path, source_stats_path: Path, output_
     face_names = payload["face_joint_names"].astype(str).tolist()
     face = [names.index(name) for name in face_names]
     correction, plane_info = canonical_ground_transform(previous_rest, names, parents, face)
+    correction_determinant = float(np.linalg.det(correction))
+    if abs(correction_determinant - 1.0) > 1e-5:
+        raise ValueError(f"{source_path.name}: correction is not a proper rotation ({correction_determinant})")
     corrected_rest = apply_global_rotation(previous_rest, correction)
     offsets = offsets.copy()
     offsets[0, 1] -= corrected_rest[:, 1].min()
     corrected_rest[:, 1] -= corrected_rest[:, 1].min()
+    if abs(float(corrected_rest[:, 1].min())) > 1e-6:
+        raise ValueError(f"{source_path.name}: corrected rest does not meet Y=0")
     corrected_global = correction[None] @ old_global
+    static_fk_error = rest_fk_max_error(corrected_rest, corrected_global, parents, offsets)
+    if static_fk_error > 1e-4:
+        raise ValueError(f"{source_path.name}: corrected rest FK error too large ({static_fk_error})")
+    corrected_forward = corrected_rest[face[1]] - corrected_rest[face[0]]
+    corrected_forward[1] = 0.0
+    corrected_forward /= max(float(np.linalg.norm(corrected_forward)), 1e-12)
+    forward_error_deg = float(
+        np.degrees(np.arccos(np.clip(corrected_forward[2], -1.0, 1.0)))
+    )
+    if forward_error_deg > 1e-3:
+        raise ValueError(f"{source_path.name}: corrected rest is not +Z forward ({forward_error_deg} deg)")
+    if not np.isfinite(corrected_rest).all() or not np.isfinite(corrected_global).all():
+        raise ValueError(f"{source_path.name}: non-finite corrected rest data")
     payload["offset_parent_local"] = offsets.astype(np.float32)
     payload["P_rest_global"] = corrected_rest.astype(np.float32)
     payload["R_rest_global"] = corrected_global.astype(np.float32)
@@ -221,6 +254,9 @@ def write_canonical_skeleton(source_path: Path, source_stats_path: Path, output_
         "max_within_rig_error": max_within_rig_error,
         "corrected_rest_min_y": float(corrected_rest[:, 1].min()),
         "corrected_rest_max_y": float(corrected_rest[:, 1].max()),
+        "corrected_rest_static_fk_max_abs_error": static_fk_error,
+        "corrected_rest_forward_error_deg": forward_error_deg,
+        "correction_determinant": correction_determinant,
         **plane_info,
     }
 
@@ -243,10 +279,14 @@ def process_rig(task: dict[str, object]) -> dict[str, object]:
         with np.load(source_path, allow_pickle=False) as source:
             payload = {key: source[key].copy() for key in source.files}
         original_motion = payload["motion"]
+        if not np.isfinite(original_motion).all():
+            raise ValueError(f"{rig_id}: source motion contains non-finite values: {source_path.name}")
         delta = matrix_from_cont6d(original_motion[:, :, 3:9].astype(np.float64))
         corrected_delta = delta @ correction.T
         corrected_motion = original_motion.copy()
         corrected_motion[:, :, 3:9] = cont6d_from_matrix(corrected_delta).astype(np.float32)
+        if not np.isfinite(corrected_motion).all():
+            raise ValueError(f"{rig_id}: corrected motion contains non-finite values: {source_path.name}")
         payload["motion"] = corrected_motion
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(output_path, **payload)
@@ -378,8 +418,13 @@ def main() -> None:
                 "rest_basis_within_rig_max_abs_error": skeleton["max_within_rig_error"],
                 "corrected_rest_min_y": skeleton["corrected_rest_min_y"],
                 "corrected_rest_max_y": skeleton["corrected_rest_max_y"],
+                "corrected_rest_static_fk_max_abs_error": skeleton["corrected_rest_static_fk_max_abs_error"],
+                "corrected_rest_forward_error_deg": skeleton["corrected_rest_forward_error_deg"],
+                "correction_determinant": skeleton["correction_determinant"],
                 "support_joint_count": skeleton["support_joint_count"],
                 "support_plane_rms": skeleton["support_plane_rms"],
+                "support_plane_relative_rms": skeleton["support_plane_relative_rms"],
+                "support_plane_span": skeleton["support_plane_span"],
             }
         )
     report_dir = output_data / "reports"
@@ -395,6 +440,10 @@ def main() -> None:
         "clip_count": int(sum(int(row["clip_count"]) for row in rows)),
         "max_first_clip_fk_error": float(max(float(row["fk_max_abs_error_first_clip"]) for row in rows)),
         "max_old_rest_basis_within_rig_error": float(max(float(row["rest_basis_within_rig_max_abs_error"]) for row in rows)),
+        "max_corrected_rest_static_fk_error": float(max(float(row["corrected_rest_static_fk_max_abs_error"]) for row in rows)),
+        "max_corrected_rest_forward_error_deg": float(max(float(row["corrected_rest_forward_error_deg"]) for row in rows)),
+        "min_correction_determinant": float(min(float(row["correction_determinant"]) for row in rows)),
+        "max_correction_determinant": float(max(float(row["correction_determinant"]) for row in rows)),
         "output_data": str(output_data),
     }
     (report_dir / "rest_pose_recanonicalization_summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
