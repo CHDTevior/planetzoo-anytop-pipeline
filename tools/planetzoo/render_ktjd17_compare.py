@@ -13,14 +13,36 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.planetzoo.build_ktjd17_pz_dataset import decode_fk_positions  # noqa: E402
-
-
 BLUE = (31, 112, 178)
 ORANGE = (205, 83, 42)
 AXIS_X = (210, 34, 34)
 AXIS_Y = (31, 150, 55)
 AXIS_Z = (30, 80, 210)
+
+
+def matrix_from_cont6d(cont6d: np.ndarray) -> np.ndarray:
+    first = cont6d[..., :3]
+    second = cont6d[..., 3:6]
+    first = first / np.maximum(np.linalg.norm(first, axis=-1, keepdims=True), 1e-12)
+    second = second - np.sum(first * second, axis=-1, keepdims=True) * first
+    second = second / np.maximum(np.linalg.norm(second, axis=-1, keepdims=True), 1e-12)
+    return np.stack((first, second, np.cross(first, second)), axis=-1)
+
+
+def decode_fk_positions(motion: np.ndarray, context: dict) -> np.ndarray:
+    """Decode the release's per-joint rest-delta rot6d without repo dependencies."""
+    rotations = matrix_from_cont6d(motion[:, :, 3:9].astype(np.float64))
+    rotations = rotations @ context["rest_rotation"][None]
+    parents = context["parents"]
+    offsets = context["offset_parent_local"]
+    positions = np.zeros((len(motion), len(parents), 3), dtype=np.float64)
+    positions[:, 0] = motion[:, 0, :3]
+    positions[:, 0, 0] += motion[:, 0, 13]
+    positions[:, 0, 2] += motion[:, 0, 14]
+    for joint in range(1, len(parents)):
+        parent = int(parents[joint])
+        positions[:, joint] = positions[:, parent] + np.einsum("tij,j->ti", rotations[:, parent], offsets[joint])
+    return positions
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,11 +166,37 @@ def render_one(args: argparse.Namespace, clip_id: str) -> dict:
     rot_fk = decode_fk_positions(motion, context)
     error = np.linalg.norm(q_position - rot_fk, axis=-1)
     indices = sample_frames(len(motion), args.max_frames)
-    projection = make_projection([q_position[indices], rot_fk[indices]], args.width, args.height)
+    root_trajectory = q_position[:, 0].copy()
+    q_view = q_position.copy()
+    fk_view = rot_fk.copy()
+    for series in (q_view, fk_view):
+        series[..., 0] -= root_trajectory[:, None, 0]
+        series[..., 2] -= root_trajectory[:, None, 2]
+    projection = make_projection([q_view[indices], fk_view[indices]], args.width, args.height)
     frames = []
     for frame_index in indices:
-        left = panel(q_position, context["parents"], frame_index, projection, args.width, args.height, "q_position + smooth_root_xz", BLUE, True)
-        right = panel(rot_fk, context["parents"], frame_index, projection, args.width, args.height, "rest_delta_6d FK", ORANGE, False)
+        left = panel(
+            q_view,
+            context["parents"],
+            frame_index,
+            projection,
+            args.width,
+            args.height,
+            "world position (root XZ centered)",
+            BLUE,
+            True,
+        )
+        right = panel(
+            fk_view,
+            context["parents"],
+            frame_index,
+            projection,
+            args.width,
+            args.height,
+            "canonical rest + rot6d FK",
+            ORANGE,
+            False,
+        )
         frame = Image.new("RGB", (args.width * 2, args.height), "white")
         frame.paste(left, (0, 0))
         frame.paste(right, (args.width, 0))

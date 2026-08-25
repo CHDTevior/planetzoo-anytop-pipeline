@@ -23,8 +23,8 @@ For every rig, the repair does the following:
 
 1. Finds terminal toe/foot/hoof joints and fits their original rest-pose
    support plane.
-2. Uses the plane normal as the canonical `+Y` direction and the hips-to-chest
-   vector projected onto that plane as canonical `+Z`.
+2. Orients the plane normal toward the chest/neck/head as canonical `+Y`, and
+   projects the hips-to-chest vector onto that plane as canonical `+Z`.
 3. Applies this one rigid rotation `C` to the full rest skeleton, preserving
    the original foot plane, then translates the root so the lowest point is
    at `Y=0`.
@@ -113,8 +113,9 @@ python tools/planetzoo/preview_recanonicalize_noik_rest_pose.py \
   --rig PZ_Reticulated_Giraffe_Female
 ```
 
-The generated image places current rest, corrected rest, and motion frame zero
-in rows, each with top, side, and front views labelled with coordinate axes.
+The generated image places current rest, candidate corrected rest, and motion
+frame zero decoded from that candidate rest plus its converted rot6d in rows,
+each with top, side, and front views labelled with coordinate axes.
 
 For a complete manual review without materialising temporary motion files:
 
@@ -128,3 +129,22 @@ python tools/planetzoo/preview_recanonicalize_noik_rest_pose.py \
 Open `index.html` in the output directory to browse the 311 full-resolution
 figures one at a time. The green row is intentionally labelled *candidate*
 until this review is accepted; it is never a reason to overwrite a release.
+
+## Motion Verification
+
+The coordinate correction intentionally leaves world-position channels and the
+root trajectory unchanged. It instead changes rot6d so that decoding from the
+new rest skeleton produces the exact same world motion. To inspect the full
+animation rather than only frame zero, use the dependency-free comparison
+renderer on an already converted output:
+
+```bash
+python tools/planetzoo/render_ktjd17_compare.py \
+  --dataset-root /data/AniMo4D_AnyTop_Official_NoIK_v1_canonical_rest/data \
+  --clip-id 5e2357f57b5081ad3bef \
+  --output-dir /data/giraffe_motion_check
+```
+
+Each GIF places the stored world positions on the left and the pose decoded
+from the canonical rest skeleton plus converted rot6d on the right. Their
+reported error should be at float32 roundoff scale (roughly `1e-7` to `1e-6`).

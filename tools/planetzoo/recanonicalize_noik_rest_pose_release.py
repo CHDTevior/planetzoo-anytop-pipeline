@@ -86,13 +86,19 @@ def canonical_ground_transform(
     if singular_values[1] <= 1e-8:
         raise ValueError("Rest support joints are collinear")
     normal = vectors[-1]
-    core = [
+    upper_body = [
         index
         for index, name in enumerate(joint_names)
-        if any(token in name.lower() for token in ("hips", "spine", "chest", "neck"))
+        if any(token in name.lower() for token in ("chest", "neck", "head"))
     ]
-    core_point = positions[core].mean(axis=0) if core else positions[0]
-    if float(np.dot(core_point - centre, normal)) < 0.0:
+    if not upper_body:
+        upper_body = [
+            index
+            for index, name in enumerate(joint_names)
+            if any(token in name.lower() for token in ("hips", "spine"))
+        ]
+    upper_point = positions[upper_body].mean(axis=0) if upper_body else positions[0]
+    if float(np.dot(upper_point - centre, normal)) < 0.0:
         normal = -normal
     forward = positions[face[1]] - positions[face[0]]
     forward -= normal * np.dot(forward, normal)
