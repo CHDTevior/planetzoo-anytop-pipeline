@@ -7,6 +7,7 @@ one corrected clip per rig to a new directory, leaving a release untouched.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
 from pathlib import Path
@@ -46,6 +47,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--rig", action="append", default=[])
+    parser.add_argument("--all", action="store_true", help="Render every rig for manual review.")
+    parser.add_argument(
+        "--images-only",
+        action="store_true",
+        help="Do not write the temporary corrected .npz previews; render only PNGs and the HTML index.",
+    )
     parser.add_argument("--panel-width", type=int, default=460)
     parser.add_argument("--panel-height", type=int, default=330)
     return parser.parse_args()
@@ -177,7 +184,7 @@ def render_triplet(
 ) -> None:
     rows = (
         ("CURRENT REST: saved P_rest_global", original_rest, original_forward, REST_COLOR),
-        ("CORRECTED REST: original support plane -> XZ ground", corrected_rest, corrected_forward, CANONICAL_REST_COLOR),
+        ("CANDIDATE REST: original support plane -> XZ ground", corrected_rest, corrected_forward, CANONICAL_REST_COLOR),
         ("MOTION frame 0: unchanged world position channels", motion_frame, motion_forward, MOTION_COLOR),
     )
     canvas = Image.new("RGB", (panel_width * 3, panel_height * 3 + 54), (246, 247, 249))
@@ -204,12 +211,41 @@ def render_triplet(
     canvas.save(output_path)
 
 
+def write_html_index(output_dir: Path, summary: list[dict[str, object]]) -> Path:
+    rows = []
+    for row in summary:
+        rig_id = html.escape(str(row["rig_id"]))
+        image = f"gallery/{rig_id}.png"
+        rows.append(
+            "<a class=\"card\" href=\"{image}\">"
+            "<img loading=\"lazy\" src=\"{image}\" alt=\"{rig_id}\">"
+            "<span>{rig_id}</span></a>".format(image=image, rig_id=rig_id)
+        )
+    page = """<!doctype html>
+<html><head><meta charset=\"utf-8\"><title>Rest-Pose Review</title>
+<style>
+body { margin: 20px; font: 15px/1.4 Segoe UI, Arial, sans-serif; color: #222; background: #f4f6f8; }
+h1 { margin: 0 0 8px; } p { margin: 0 0 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+.card { display: block; color: inherit; text-decoration: none; padding: 8px; background: white; border: 1px solid #d9dde2; }
+.card:hover { border-color: #3578c5; } img { display: block; width: 100%; height: auto; } span { display: block; margin: 8px 3px 2px; font-weight: 600; }
+</style></head><body>
+<h1>311-rig Rest-Pose Review</h1>
+<p>Orange: stored rest. Green: candidate support-plane canonical rest. Blue: unchanged motion frame 0. Click an image for full resolution.</p>
+<main class=\"grid\">{rows}</main></body></html>""".replace("{rows}", "\n".join(rows))
+    index = output_dir / "index.html"
+    index.write_text(page, encoding="utf-8")
+    return index
+
+
 def main() -> None:
     args = parse_args()
     data_root = data_root_from(args.release_root)
     first_clips = first_clip_by_rig(data_root / "manifests" / "clips.jsonl")
     available = {path.stem for path in (data_root / "skeletons").glob("*.npz")}
-    rig_ids = args.rig or [rig for rig in DEFAULT_RIGS if rig in available]
+    if args.all and args.rig:
+        raise ValueError("Use either --all or one or more --rig values, not both")
+    rig_ids = sorted(available) if args.all else (args.rig or [rig for rig in DEFAULT_RIGS if rig in available])
     if not rig_ids:
         raise ValueError("No requested preview rigs are present")
     missing = [rig for rig in rig_ids if rig not in available]
@@ -246,8 +282,9 @@ def main() -> None:
         payload["P_rest_global"] = corrected_rest.astype(np.float32)
         payload["R_rest_global"] = corrected_global_rotation.astype(np.float32)
         payload["R_rest_local"] = local_from_global(corrected_global_rotation, parents).astype(np.float32)
-        skeleton_out.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(skeleton_out / skeleton_path.name, **payload)
+        if not args.images_only:
+            skeleton_out.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(skeleton_out / skeleton_path.name, **payload)
 
         clip = first_clips[rig_id]
         with np.load(data_root / clip["motion_file"], allow_pickle=False) as source:
@@ -255,9 +292,10 @@ def main() -> None:
         original_motion = motion_payload["motion"]
         corrected_motion = recanonicalize_motion(original_motion, correction)
         motion_payload["motion"] = corrected_motion
-        motion_out.mkdir(parents=True, exist_ok=True)
         preview_motion_path = motion_out / f"{rig_id}__{Path(clip['motion_file']).stem}.npz"
-        np.savez_compressed(preview_motion_path, **motion_payload)
+        if not args.images_only:
+            motion_out.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(preview_motion_path, **motion_payload)
 
         corrected_delta = matrix_from_cont6d(corrected_motion[:, :, 3:9].astype(np.float64))
         corrected_global = corrected_delta @ corrected_global_rotation[None]
@@ -286,7 +324,7 @@ def main() -> None:
             {
                 "rig_id": rig_id,
                 "source_motion": clip["motion_file"],
-                "preview_motion": preview_motion_path.name,
+                "preview_motion": None if args.images_only else preview_motion_path.name,
                 "shared_old_rest_basis_max_within_rig_error": within_rig_error,
                 "corrected_motion_fk_max_abs_error": motion_fk_max_error,
                 "corrected_rest_min_y": float(corrected_rest[:, 1].min()),
@@ -296,6 +334,8 @@ def main() -> None:
         )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    index = write_html_index(args.output_dir, summary)
+    print(f"HTML review index: {index}")
     print(json.dumps(summary, indent=2))
 
 

@@ -115,3 +115,16 @@ python tools/planetzoo/preview_recanonicalize_noik_rest_pose.py \
 
 The generated image places current rest, corrected rest, and motion frame zero
 in rows, each with top, side, and front views labelled with coordinate axes.
+
+For a complete manual review without materialising temporary motion files:
+
+```bash
+python tools/planetzoo/preview_recanonicalize_noik_rest_pose.py \
+  --release-root /data/AniMo4D_AnyTop_Official_NoIK_v1 \
+  --output-dir /data/rest_review_all_311 \
+  --all --images-only
+```
+
+Open `index.html` in the output directory to browse the 311 full-resolution
+figures one at a time. The green row is intentionally labelled *candidate*
+until this review is accepted; it is never a reason to overwrite a release.
